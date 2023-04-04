@@ -1727,7 +1727,7 @@ dependencies = [
  "ethereum-types",
  "ethers",
  "ethers-solc",
- "getrandom",
+ "gloo-utils",
  "halo2_proofs",
  "halo2curves 0.3.1",
  "hex",
@@ -1751,6 +1751,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tract-onnx",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2095,6 +2096,19 @@ dependencies = [
  "futures-core",
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "gloo-utils"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8e8fc851e9c7b9852508bc6e3f690f452f474417e8545ec9857b7f7377036b5"
+dependencies = [
+ "js-sys",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -5439,6 +5453,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31f8dcbc21f30d9b8f2ea926ecb58f6b91192c17e9d33594b3df58b2007ca53b"
 dependencies = [
  "cfg-if",
+ "serde",
+ "serde_json",
  "wasm-bindgen-macro",
 ]
 

@@ -8,11 +8,13 @@ use crate::fieldutils::i128_to_felt;
 use crate::graph::{utilities::vector_to_quantized, Model, ModelCircuit};
 use crate::tensor::ops::pack;
 use crate::tensor::{Tensor, TensorType};
+use wasm_bindgen::prelude::*;
+use halo2_proofs::pasta::{Fp, Eq, EqAffine};
 use halo2_proofs::arithmetic::FieldExt;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::dev::MockProver;
 use halo2_proofs::plonk::{
-    create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, ProvingKey, VerifyingKey,
+    create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, ProvingKey, VerifyingKey, SingleVerifier
 };
 use halo2_proofs::poly::commitment::{CommitmentScheme, Params, ParamsProver, Prover, Verifier};
 use halo2_proofs::poly::VerificationStrategy;
@@ -33,6 +35,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::time::Instant;
 use thiserror::Error as thisError;
+use gloo_utils::format::JsValueSerdeExt;
 
 #[derive(thisError, Debug)]
 /// Errors related to pfsys
@@ -408,6 +411,26 @@ where
     info!("verify took {}", now.elapsed().as_secs());
     verify_proof::<Scheme, V, _, TR, _>(params, vk, strategy, instances, &mut transcript)
 }
+
+
+/// WASM Bindgen for verify_proof_circuit
+#[wasm_bindgen]
+pub fn verify_proof_circuit_js(snark_js: JsValue, params_js: JsValue, vk_js: JsValue, strategy_js: JsValue) -> Result<JsValue, JsValue> {
+    // Deserialize snark proof, parameter set, and verifying key from JavaScript values
+    let snark: Snark<Fp, EqAffine> = snark_js.into_serde().map_err(|e| JsValue::from(format!("{}", e)))?;
+    let params: <EqAffine as CurveAffine>::Parameters = params_js.into_serde().map_err(|e| JsValue::from(format!("{}", e)))?;
+    let vk: <EqAffine as CurveAffine>::VerifierKey = vk_js.into_serde().map_err(|e| JsValue::from(format!("{}", e)))?;
+    let strategy: SingleVerifier<EqAffine> = strategy_js.into_serde().map_err(|e| JsValue::from(format!("{}", e)))?;
+
+    // Call the original `verify_proof_circuit` function with the deserialized arguments
+    let result = verify_proof_circuit(&snark, &params, &vk, strategy)
+        .map_err(|e| JsValue::from(format!("{:?}", e)))?;
+
+    // Serialize the result to a JavaScript value and return it
+    let result_js = JsValue::from_serde(&result).map_err(|e| JsValue::from(format!("{}", e)))?;
+    Ok(result_js)
+}
+
 
 /// Loads a [VerifyingKey] at `path`.
 pub fn load_vk<Scheme: CommitmentScheme, F: FieldExt + TensorType, C: Circuit<F>>(
