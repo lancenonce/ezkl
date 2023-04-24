@@ -4,6 +4,9 @@ use itertools::Itertools;
 use puruspe::erf;
 pub use std::ops::{Add, Div, Mul, Sub};
 
+use statrs::distribution::Beta;
+use statrs::distribution::ContinuousCDF;
+
 /// Matrix multiplies two 2D tensors (and adds an offset).
 /// # Arguments
 ///
@@ -1062,6 +1065,64 @@ pub mod nonlinearities {
     pub fn mean(a: &Tensor<i128>, scale: usize) -> Tensor<i128> {
         let sum = sum(a).unwrap();
         const_div(&sum, (scale * a.len()) as f32)
+    }
+
+     /// Takes the Beta Inverse Cumulative Distribution Function of a value in a tensor.
+    /// # Arguments
+    ///
+    /// * `rand` - Randomness Tensor
+    /// * `a` - Alpha
+    /// * `b` - Beta
+    /// * `c` - certainty value
+    /// * `scale_input` - Scale factor to normalize input tensor values to [0, 1] range
+    /// * `scale_output` - Scale factor to convert output tensor values back to the original range
+    /// # Examples
+    /// ```
+    /// use ezkl_lib::tensor::Tensor;
+    /// use ezkl_lib::tensor::ops::nonlinearities::bicdf;
+    ///
+    /// let randomness_tensor = Tensor::<i128>::new(
+    ///     Some(&[300]),
+    ///     &[1],
+    /// ).unwrap();
+    /// let alpha = 2.0;
+    /// let beta = 3.0;
+    /// let certainty = 90.0;
+    ///
+    /// let result = bicdf(&randomness_tensor, alpha, beta, certainty, 128, 16);
+    /// for value in result.iter() {
+    ///     assert!(*value >= 0);
+    ///     assert!(*value <= scale_output as i128);
+    /// }
+    /// ```
+    pub fn bicdf(
+        rand: &Tensor<i128>,
+        a: f32,
+        b: f32,
+        c: f32,
+        scale_input: usize,
+        scale_output: usize,
+    ) -> Tensor<i128> {
+        let mut output = rand.clone();
+        // calculate C and use it for alpha and beta
+        let certainty = (c / 100.0) / (a + b);
+        let alpha = a * certainty;
+        let beta = b * certainty;
+
+        // define the beta function
+        let n = Beta::new(alpha as f64, beta as f64).unwrap();
+
+        // adjust random value to be between 0 and 1
+        // apply the inverse cdf to the random value
+        // output the result
+        for i in 0..rand.len() {
+            let adjusted_random = rand[i] as f32 / (scale_input as f32);
+            let res: f32 = n.inverse_cdf(adjusted_random as f64) as f32;
+            let result = (scale_output as f32) * (res);
+            output[i] = result as i128;
+        }
+
+        output
     }
 }
 
