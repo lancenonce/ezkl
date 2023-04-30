@@ -1585,3 +1585,86 @@ mod relu {
         prover.assert_satisfied();
     }
 }
+
+//TODO: fix bugs, configure BaseConfig to accept HybridOp lookups or make another config for hybrid ops
+//TODO: integrate the new lookup with softmax
+#[cfg(test)]
+mod softmax {
+    use super::*;
+
+    const K: usize = 19;
+    const LEN: usize = 32;
+    use crate::circuit::hybrid::HybridOp;
+
+    #[derive(Clone)]
+    struct SoftmaxCircuit<F: PrimeField + TensorType + PartialOrd> {
+        pub input: ValTensor<F>,
+    }
+    #[derive(Clone)]
+    struct SoftmaxConfig<F: PrimeField + TensorType + PartialOrd> {
+        base_config: BaseConfig<F>,
+    }
+
+    impl<F: PrimeField + TensorType + PartialOrd> Circuit<F> for SoftmaxCircuit<F> {
+        type Config = BaseConfig<F>;
+        type FloorPlanner = SimpleFloorPlanner;
+        type Params = TestParams;
+
+        fn without_witnesses(&self) -> Self {
+            self.clone()
+        }
+
+        fn configure(cs: &mut ConstraintSystem<F>) -> Self::Config {
+            let advices = (0..2)
+                .map(|_| VarTensor::new_advice(cs, 4, 3))
+                .collect::<Vec<_>>();
+
+            let op = HybridOp::Softmax { scales: (1, 1) };
+
+            let mut config = BaseConfig::default();
+
+            config
+                .configure_lookup(cs, &advices[0], &advices[1], 2, &op)
+                .unwrap();
+            config
+        }
+
+        fn synthesize(
+            &self,
+            mut config: Self::Config,
+            mut layouter: impl Layouter<F>, // layouter is our 'write buffer' for the circuit
+        ) -> Result<(), Error> {
+            config.layout_tables(&mut layouter).unwrap();
+            layouter
+                .assign_region(
+                    || "",
+                    |mut region| {
+                        config
+                            .layout(
+                                &mut Some(&mut region),
+                                &[self.input.clone()],
+                                &mut 0,
+                                Box::new(HybridOp::Softmax { scales: (1, 1) }),
+                            )
+                            .map_err(|_| Error::Synthesis)
+                    },
+                )
+                .unwrap();
+
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn softmaxcircuit() {
+        let input: Tensor<Value<F>> =
+            Tensor::new(Some(&[Value::<F>::known(F::from(1_u64)); 4]), &[4]).unwrap();
+
+        let circuit = SoftmaxCircuit::<F> {
+            input: ValTensor::from(input),
+        };
+
+        let prover = MockProver::run(K as u32, &circuit, vec![]).unwrap();
+        prover.assert_satisfied();
+    }
+}

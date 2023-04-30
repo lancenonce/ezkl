@@ -347,7 +347,7 @@ impl<F: PrimeField + TensorType + PartialOrd> ValTensor<F> {
         Ok(())
     }
 
-    /// Calls `duplicate_every_n` on the inner [Tensor].
+    /// Calls `remove_every_n` on the inner [Tensor].
     pub fn remove_every_n(&mut self, n: usize, initial_offset: usize) -> Result<(), TensorError> {
         match self {
             ValTensor::Value {

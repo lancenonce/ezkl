@@ -4,7 +4,7 @@ use halo2curves::ff::PrimeField;
 
 use halo2_proofs::{
     circuit::{Layouter, Value},
-    plonk::{ConstraintSystem, TableColumn},
+    plonk::{ConstraintSystem, TableColumn, Column, Advice},
 };
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
 };
 
 use crate::circuit::lookup::LookupOp;
+use crate::circuit::hybrid::HybridOp;
 
 use super::Op;
 
@@ -94,3 +95,88 @@ impl<F: PrimeField + TensorType + PartialOrd> Table<F> {
             .map_err(Box::<dyn Error>::from)
     }
 }
+
+/// Halo2 lookup table for dynamic lookups
+/// Recorded as an advice column
+#[derive(Clone, Debug)]
+pub struct DynamicTable<F: PrimeField> {
+    /// composed operations represented by the table
+    pub operation: HybridOp,
+    /// Input of dynamic table
+    pub dyn_table_input: Column<Advice>,
+    /// Output of dynamic table
+    pub dyn_table_output: Column<Advice>,
+    /// Flags if table has been previously assigned to.
+    pub is_assigned: bool,
+    /// Number of bits used in lookup table.
+    pub bits: usize,
+    _marker: PhantomData<F>,
+}
+
+//TODO: Integrate with softmax and other dynamic lookups
+impl<F: PrimeField + TensorType + PartialOrd> DynamicTable<F> {
+    /// Configure the table
+    pub fn configure(
+        cs: &mut ConstraintSystem<F>,
+        bits: usize,
+        operation: &HybridOp,
+    ) -> DynamicTable<F> {
+        DynamicTable {
+            operation: operation.clone(),
+            dyn_table_input: cs.advice_column(),
+            dyn_table_output: cs.advice_column(),
+            is_assigned: false,
+            bits,
+            _marker: PhantomData,
+        }
+    }
+    
+    /// Assigns values to the constraints generated when calling `configure`.
+    pub fn layout(&mut self, layouter: &mut impl Layouter<F>) -> Result<(), Box<dyn Error>> {
+        // if the cell is already assigned, throw an error
+        if self.is_assigned {
+            return Err(Box::new(CircuitError::TableAlreadyAssigned));
+        }
+
+        let base = 2i128;
+        // why are we binding bits to u32 - 1?
+        let smallest = -base.pow(self.bits as u32 - 1);
+        let largest = base.pow(self.bits as u32 - 1);
+
+        let inputs = Tensor::from(smallest..largest);
+        // Change the nonlinearity to a hybrid operation
+        let evals = Op::<F>::f(&self.operation, &[inputs.clone()])?;
+        // set the table to assigned
+        self.is_assigned = true;
+        // layout the table with advice region vs. fixed
+        layouter
+            .assign_region(
+                || "hybrid table",
+                |mut table| {
+                    let _ = inputs
+                        .iter()
+                        .enumerate()
+                        .map(|(row_offset, input)| {
+                            table.assign_advice(
+                                || format!("hybriud_i_col row {}", row_offset),
+                                self.dyn_table_input,
+                                row_offset,
+                                || Value::known(i128_to_felt::<F>(*input)),
+                            )?;
+
+                            table.assign_advice(
+                                || format!("hybrid_o_col row {}", row_offset),
+                                self.dyn_table_output,
+                                row_offset,
+                                || Value::known(i128_to_felt::<F>(evals[row_offset])),
+                            )?;
+                            Ok(())
+                        })
+                        .collect::<Result<Vec<()>, halo2_proofs::plonk::Error>>()?;
+                    Ok(())
+                },
+            )
+            .map_err(Box::<dyn Error>::from)
+    }
+}
+
