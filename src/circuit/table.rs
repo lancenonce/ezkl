@@ -101,7 +101,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Table<F> {
 #[derive(Clone, Debug)]
 pub struct DynamicTable<F: PrimeField> {
     /// composed operations represented by the table
-    pub operation: HybridOp,
+    pub operation: Box<dyn Op<F>>,
     /// Input of dynamic table
     pub dyn_table_input: Column<Advice>,
     /// Output of dynamic table
@@ -119,7 +119,7 @@ impl<F: PrimeField + TensorType + PartialOrd> DynamicTable<F> {
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
         bits: usize,
-        operation: &HybridOp,
+        operation: &Box<dyn Op<F>>,
     ) -> DynamicTable<F> {
         DynamicTable {
             operation: operation.clone(),

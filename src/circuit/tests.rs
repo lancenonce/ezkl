@@ -1624,7 +1624,7 @@ mod softmax {
             let mut config = BaseConfig::default();
 
             config
-                .configure_lookup(cs, &advices[0], &advices[1], 2, &op)
+                .configure_dyn_lookup(cs, &advices[0], &advices[1], 2, &op)
                 .unwrap();
             config
         }

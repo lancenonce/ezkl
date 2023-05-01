@@ -29,7 +29,7 @@ use crate::{
 };
 use std::{collections::BTreeMap, error::Error, marker::PhantomData};
 
-use self::{ops::lookup::LookupOp, table::Table};
+use self::{ops::lookup::LookupOp, table::{Table, DynamicTable}};
 use halo2curves::ff::{Field, PrimeField};
 
 /// circuit related errors.
@@ -272,6 +272,79 @@ impl<F: PrimeField + TensorType + PartialOrd> BaseConfig<F> {
                             _ => panic!("uninitialized Vartensor"),
                         },
                         table.table_output,
+                    ),
+                ]
+            });
+        }
+        self.lookup_selectors.extend(selectors);
+        // if we haven't previously initialized the input/output, do so now
+        if let VarTensor::Empty = self.lookup_input {
+            warn!("assigning lookup input");
+            self.lookup_input = input.clone();
+        }
+        if let VarTensor::Empty = self.lookup_output {
+            warn!("assigning lookup output");
+            self.lookup_output = output.clone();
+        }
+        Ok(())
+    }
+
+    /// Configures and creates dynamic lookup selectors
+    pub fn configure_dyn_lookup(
+        &mut self,
+        cs: &mut ConstraintSystem<F>,
+        input: &VarTensor,
+        output: &VarTensor,
+        bits: usize,
+        op: &Box<dyn Op<F>>,
+    ) -> Result<(), Box<dyn Error>>
+    where
+        F: Field,
+    {
+        let mut selectors = BTreeMap::new();
+        let table =
+            if let std::collections::btree_map::Entry::Vacant(e) = self.tables.entry(op.clone()) {
+                let table = DynamicTable::<F>::configure(cs, bits, op);
+                e.insert(table.clone());
+                table
+            } else {
+                return Ok(());
+            };
+        for x in 0..input.num_cols() {
+            let qlookup = cs.complex_selector();
+            selectors.insert((op.clone(), x), qlookup);
+            let _ = cs.lookup_any(Op::<F>::as_str(op), |cs| {
+                let qlookup = cs.query_selector(qlookup);
+                let not_qlookup = Expression::Constant(<F as Field>::ONE) - qlookup.clone();
+                let (default_x, default_y): (F, F) = op.default_pair();
+                vec![
+                    (
+                        match &input {
+                            VarTensor::Advice { inner: advices, .. } => {
+                                qlookup.clone() * cs.query_advice(advices[x], Rotation(0))
+                                    + not_qlookup.clone() * default_x
+                            }
+                            VarTensor::Fixed { inner: fixed, .. } => {
+                                qlookup.clone() * cs.query_fixed(fixed[x], Rotation(0))
+                                    + not_qlookup.clone() * default_x
+                            }
+                            _ => panic!("uninitialized Vartensor"),
+                        },
+                        table.dyn_table_input,
+                    ),
+                    (
+                        match &output {
+                            VarTensor::Advice { inner: advices, .. } => {
+                                qlookup * cs.query_advice(advices[x], Rotation(0))
+                                    + not_qlookup * default_y
+                            }
+                            VarTensor::Fixed { inner: fixed, .. } => {
+                                qlookup * cs.query_fixed(fixed[x], Rotation(0))
+                                    + not_qlookup * default_y
+                            }
+                            _ => panic!("uninitialized Vartensor"),
+                        },
+                        table.dyn_table_output,
                     ),
                 ]
             });
