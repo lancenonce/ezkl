@@ -14,7 +14,6 @@ use crate::{
 };
 
 use crate::circuit::lookup::LookupOp;
-use crate::circuit::hybrid::HybridOp;
 
 use super::Op;
 
@@ -96,9 +95,9 @@ impl<F: PrimeField + TensorType + PartialOrd> Table<F> {
     }
 }
 
-/// Halo2 lookup table for dynamic lookups
-/// Recorded as an advice column
-#[derive(Clone, Debug)]
+/// Halo2 lookup table for dynamic lookups;
+/// recorded as an advice column
+#[derive(Debug)]
 pub struct DynamicTable<F: PrimeField> {
     /// composed operations represented by the table
     pub operation: Box<dyn Op<F>>,
@@ -122,7 +121,7 @@ impl<F: PrimeField + TensorType + PartialOrd> DynamicTable<F> {
         operation: &Box<dyn Op<F>>,
     ) -> DynamicTable<F> {
         DynamicTable {
-            operation: operation.clone(),
+            operation: operation.clone_dyn(),
             dyn_table_input: cs.advice_column(),
             dyn_table_output: cs.advice_column(),
             is_assigned: false,

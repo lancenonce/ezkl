@@ -3,7 +3,7 @@ use std::error::Error;
 use halo2_proofs::circuit::Region;
 use serde::{Deserialize, Serialize};
 
-use crate::tensor::{self, Tensor, TensorError, TensorType, ValTensor};
+use crate::{tensor::{self, Tensor, TensorError, TensorType, ValTensor}, fieldutils::i128_to_felt};
 use halo2curves::ff::PrimeField;
 
 use self::lookup::LookupOp;
@@ -20,7 +20,7 @@ pub mod lookup;
 pub mod poly;
 
 ///
-pub trait Op<F: PrimeField + TensorType + PartialOrd>: std::fmt::Debug + Send + Sync {
+pub trait Op<F: PrimeField + TensorType + PartialOrd>: std::fmt::Debug + Send + Sync  {
     ///
     fn f(&self, x: &[Tensor<i128>]) -> Result<Tensor<i128>, TensorError>;
     ///
@@ -60,6 +60,15 @@ pub trait Op<F: PrimeField + TensorType + PartialOrd>: std::fmt::Debug + Send + 
 
     ///
     fn clone_dyn(&self) -> Box<dyn Op<F>>;
+
+    ///
+    fn default_pair(&self) -> (F, F) {
+        let x = vec![0_i128].into_iter().into();
+        (
+            <F as TensorType>::zero().unwrap(),
+            i128_to_felt(Op::<F>::f(self, &[x]).unwrap()[0]),
+        )
+    }
 }
 
 impl<F: PrimeField + TensorType + PartialOrd> Clone for Box<dyn Op<F>> {
@@ -67,6 +76,38 @@ impl<F: PrimeField + TensorType + PartialOrd> Clone for Box<dyn Op<F>> {
         self.clone_dyn()
     }
 }
+
+impl<F: PrimeField + TensorType + PartialOrd> Eq for Box<dyn Op<F>> {}
+
+impl<F: PrimeField + TensorType + PartialOrd> PartialEq for Box<dyn Op<F>> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl<F: PrimeField + TensorType + PartialOrd> PartialOrd for Box<dyn Op<F>> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.as_str().partial_cmp(other.as_str())
+    }
+}
+
+impl<F: PrimeField + TensorType + PartialOrd> Ord for Box<dyn Op<F>> { 
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+// trait DLOp<F: PrimeField + TensorType + PartialOrd>: 
+// std::fmt::Debug + Send + Sync {
+//     fn default_pair(&self) -> (F, F) {
+//         let x = vec![0_i128].into_iter().into();
+//         (
+//             <F as TensorType>::zero().unwrap(),
+//             i128_to_felt(Op::<F>::f(self, &[x]).unwrap()[0]),
+//         )
+//     }
+//     fn partial ord / ord
+// }
 
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

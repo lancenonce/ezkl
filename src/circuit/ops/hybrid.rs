@@ -3,7 +3,7 @@ use halo2_proofs::circuit::Region;
 use crate::{
     circuit::layouts,
     graph::scale_to_multiplier,
-    tensor::{self, Tensor, TensorError, TensorType, ValTensor},
+    tensor::{self, Tensor, TensorError, TensorType, ValTensor}, fieldutils::i128_to_felt,
 };
 
 use super::{lookup::LookupOp, Op};
@@ -27,6 +27,17 @@ pub enum HybridOp {
     Softmax {
         scales: (usize, usize),
     },
+}
+
+impl HybridOp {
+    /// a value which is always in the lookup table
+    pub fn default_pair<F: PrimeField + TensorType + PartialOrd>(&self) -> (F, F) {
+        let x = vec![0_i128].into_iter().into();
+        (
+            <F as TensorType>::zero().unwrap(),
+            i128_to_felt(Op::<F>::f(self, &[x]).unwrap()[0]),
+        )
+    }
 }
 
 impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {

@@ -1619,7 +1619,9 @@ mod softmax {
                 .map(|_| VarTensor::new_advice(cs, 4, 3))
                 .collect::<Vec<_>>();
 
-            let op = HybridOp::Softmax { scales: (1, 1) };
+            // let op = HybridOp::Softmax { scales: (1, 1) };
+            let op: Box<dyn Op<F> + 'static> = Box::new(HybridOp::Softmax { scales: (1, 1) });
+
 
             let mut config = BaseConfig::default();
 
