@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use halo2_proofs::{
     circuit::{Layouter, Region},
-    plonk::{ConstraintSystem, Constraints, Expression, Selector, AdviceQuery},
+    plonk::{ConstraintSystem, Constraints, Expression, Selector},
     poly::Rotation,
 };
 use log::warn;
@@ -88,11 +88,11 @@ pub struct BaseConfig<F: PrimeField + TensorType + PartialOrd> {
     /// [Selectors] generated when configuring the layer. We use a BTreeMap as we expect to configure many lookup ops.
     pub lookup_selectors: BTreeMap<(LookupOp, usize), Selector>,
     /// [Dynamic Selectors] generated when configuring the dynamic lookup
-    pub lookup_dyn_selectors: BTreeMap<(Box<dyn Op<F>>, usize), Selector>,
+    // pub lookup_dyn_selectors: BTreeMap<(Box<dyn Op<F>>, usize), Selector>,
     /// [Table]
     pub tables: BTreeMap<LookupOp, Table<F>>,
     /// dynamic lookup tables
-    pub dyn_tables: BTreeMap<Box<dyn Op<F>>, DynamicTable<F>>,
+    pub dyn_tables: BTreeMap<LookupOp, DynamicTable<F>>,
     /// Activate sanity checks
     pub check_mode: CheckMode,
     _marker: PhantomData<F>,
@@ -302,7 +302,7 @@ impl<F: PrimeField + TensorType + PartialOrd> BaseConfig<F> {
         input: &VarTensor,
         output: &VarTensor,
         bits: usize,
-        op: &Box<dyn Op<F>>,
+        op: &LookupOp,
     ) -> Result<(), Box<dyn Error>>
     where
         F: Field,
@@ -347,7 +347,7 @@ impl<F: PrimeField + TensorType + PartialOrd> BaseConfig<F> {
                 ]
             });
         }
-        self.lookup_dyn_selectors.extend(selectors);
+        self.lookup_selectors.extend(selectors);
         // if we haven't previously initialized the input/output, do so now
         if let VarTensor::Empty = self.lookup_input {
             warn!("assigning lookup input");

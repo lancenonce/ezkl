@@ -97,10 +97,10 @@ impl<F: PrimeField + TensorType + PartialOrd> Table<F> {
 
 /// Halo2 lookup table for dynamic lookups;
 /// recorded as an advice column
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DynamicTable<F: PrimeField> {
     /// composed operations represented by the table
-    pub operation: Box<dyn Op<F>>,
+    pub operation: LookupOp,
     /// Input of dynamic table
     pub dyn_table_input: Column<Advice>,
     /// Output of dynamic table
@@ -118,10 +118,10 @@ impl<F: PrimeField + TensorType + PartialOrd> DynamicTable<F> {
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
         bits: usize,
-        operation: &Box<dyn Op<F>>,
+        operation: &LookupOp,
     ) -> DynamicTable<F> {
         DynamicTable {
-            operation: operation.clone_dyn(),
+            operation: operation.clone(),
             dyn_table_input: cs.advice_column(),
             dyn_table_output: cs.advice_column(),
             is_assigned: false,
@@ -143,7 +143,6 @@ impl<F: PrimeField + TensorType + PartialOrd> DynamicTable<F> {
         let largest = base.pow(self.bits as u32 - 1);
 
         let inputs = Tensor::from(smallest..largest);
-        // Change the nonlinearity to a hybrid operation
         let evals = Op::<F>::f(&self.operation, &[inputs.clone()])?;
         // set the table to assigned
         self.is_assigned = true;
@@ -157,7 +156,7 @@ impl<F: PrimeField + TensorType + PartialOrd> DynamicTable<F> {
                         .enumerate()
                         .map(|(row_offset, input)| {
                             table.assign_advice(
-                                || format!("hybriud_i_col row {}", row_offset),
+                                || format!("hybrid_i_col row {}", row_offset),
                                 self.dyn_table_input,
                                 row_offset,
                                 || Value::known(i128_to_felt::<F>(*input)),

@@ -1586,8 +1586,7 @@ mod relu {
     }
 }
 
-//TODO: fix bugs, configure BaseConfig to accept HybridOp lookups or make another config for hybrid ops
-//TODO: integrate the new lookup with softmax
+//TODO: refactor for sigmoid
 #[cfg(test)]
 mod softmax {
     use super::*;
