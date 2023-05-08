@@ -384,70 +384,6 @@ impl<F: PrimeField + TensorType + PartialOrd> BaseConfig<F> {
         Ok(())
     }
 
-    /// Configures and creates dynamic lookup selectors
-    pub fn configure_dyn_lookup(
-        &mut self,
-        cs: &mut ConstraintSystem<F>,
-        input: &VarTensor,
-        output: &VarTensor,
-        bits: usize,
-        op: &LookupOp,
-    ) -> Result<(), Box<dyn Error>>
-    where
-        F: Field,
-    {
-        let mut selectors = BTreeMap::new();
-        if let std::collections::btree_map::Entry::Vacant(e) = self.dyn_tables.entry(op.clone()) {
-            let table = DynamicTable::<F>::configure(cs, bits, op);
-            e.insert(table);
-        } else {
-            return Ok(());
-        };
-        let dyn_table = self.dyn_tables.get(op).unwrap();
-        for x in 0..input.num_cols() {
-            let qlookup = cs.complex_selector();
-            selectors.insert((op.clone(), x), qlookup);
-            // Op::<F>::as_str(op) => "dynamic operation"
-            let _ = cs.lookup_any("dynamic operation", |cs| {
-                let qlookup = cs.query_selector(qlookup);
-                let not_qlookup = Expression::Constant(<F as Field>::ONE) - qlookup.clone();
-                let (default_x, default_y): (F, F) = op.default_pair();
-                vec![
-                    (
-                        match &input {
-                            VarTensor::Advice { inner: advices, .. } => {
-                                qlookup.clone() * cs.query_advice(advices[x], Rotation(0))
-                                    + not_qlookup.clone() * default_x
-                            }
-                            _ => panic!("bad Vartensor: use advice columns only"),
-                        },
-                        cs.query_advice(dyn_table.dyn_table_input, Rotation(0)),
-                    ),
-                    (
-                        match &output {
-                            VarTensor::Advice { inner: advices, .. } => {
-                                qlookup * cs.query_advice(advices[x], Rotation(0))
-                                    + not_qlookup * default_y
-                            }
-                            _ => panic!("bad Vartensor: use advice columns only"),
-                        },
-                        cs.query_advice(dyn_table.dyn_table_output, Rotation(0)),
-                    ),
-                ]
-            });
-        }
-        self.lookup_selectors.extend(selectors);
-        // if we haven't previously initialized the input/output, do so now
-        if let VarTensor::Empty = self.lookup_input {
-            warn!("assigning lookup input");
-            self.lookup_input = input.clone();
-        }
-        if let VarTensor::Empty = self.lookup_output {
-            warn!("assigning lookup output");
-            self.lookup_output = output.clone();
-        }
-        Ok(())
-    }
 
     /// layout_tables must be called before layout.
     pub fn layout_tables(&mut self, layouter: &mut impl Layouter<F>) -> Result<(), Box<dyn Error>> {
@@ -456,6 +392,20 @@ impl<F: PrimeField + TensorType + PartialOrd> BaseConfig<F> {
                 debug!(
                     "laying out table for {:?}",
                     crate::circuit::ops::Op::<F>::as_str(&table.nonlinearity)
+                );
+                table.layout(layouter)?;
+            }
+        }
+        Ok(())
+    }
+
+     /// layout_tables must be called before layout.
+     pub fn layout_dyn_tables(&mut self, layouter: &mut impl Layouter<F>) -> Result<(), Box<dyn Error>> {
+        for table in self.dyn_tables.values_mut() {
+            if !table.is_assigned {
+                debug!(
+                    "laying out table for {:?}",
+                    crate::circuit::ops::Op::<F>::as_str(&table.operation)
                 );
                 table.layout(layouter)?;
             }

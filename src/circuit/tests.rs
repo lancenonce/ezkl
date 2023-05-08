@@ -1586,25 +1586,24 @@ mod relu {
     }
 }
 
-//TODO: refactor for sigmoid
 #[cfg(test)]
-mod softmax {
+mod sigmoid {
     use super::*;
 
     const K: usize = 19;
-    const LEN: usize = 32;
-    use crate::circuit::hybrid::HybridOp;
+    // const LEN: usize = 32;
+    use crate::circuit::lookup::LookupOp;
 
     #[derive(Clone)]
-    struct SoftmaxCircuit<F: PrimeField + TensorType + PartialOrd> {
+    struct SigmoidCircuit<F: PrimeField + TensorType + PartialOrd> {
         pub input: ValTensor<F>,
     }
-    #[derive(Clone)]
-    struct SoftmaxConfig<F: PrimeField + TensorType + PartialOrd> {
-        base_config: BaseConfig<F>,
-    }
+    // #[derive(Clone)]
+    // struct SigmoidConfig<F: PrimeField + TensorType + PartialOrd> {
+    //     base_config: BaseConfig<F>,
+    // }
 
-    impl<F: PrimeField + TensorType + PartialOrd> Circuit<F> for SoftmaxCircuit<F> {
+    impl<F: PrimeField + TensorType + PartialOrd> Circuit<F> for SigmoidCircuit<F> {
         type Config = BaseConfig<F>;
         type FloorPlanner = SimpleFloorPlanner;
         type Params = TestParams;
@@ -1618,8 +1617,7 @@ mod softmax {
                 .map(|_| VarTensor::new_advice(cs, 4, 3))
                 .collect::<Vec<_>>();
 
-            // let op = HybridOp::Softmax { scales: (1, 1) };
-            let op: Box<dyn Op<F> + 'static> = Box::new(HybridOp::Softmax { scales: (1, 1) });
+            let op = LookupOp::Sigmoid { scales: (1, 1) };
 
 
             let mut config = BaseConfig::default();
@@ -1635,7 +1633,7 @@ mod softmax {
             mut config: Self::Config,
             mut layouter: impl Layouter<F>, // layouter is our 'write buffer' for the circuit
         ) -> Result<(), Error> {
-            config.layout_tables(&mut layouter).unwrap();
+            config.layout_dyn_tables(&mut layouter).unwrap();
             layouter
                 .assign_region(
                     || "",
@@ -1645,7 +1643,7 @@ mod softmax {
                                 &mut Some(&mut region),
                                 &[self.input.clone()],
                                 &mut 0,
-                                Box::new(HybridOp::Softmax { scales: (1, 1) }),
+                                Box::new(LookupOp::Sigmoid { scales: (1, 1) }),
                             )
                             .map_err(|_| Error::Synthesis)
                     },
@@ -1657,11 +1655,11 @@ mod softmax {
     }
 
     #[test]
-    fn softmaxcircuit() {
+    fn sigmoidcircuit() {
         let input: Tensor<Value<F>> =
             Tensor::new(Some(&[Value::<F>::known(F::from(1_u64)); 4]), &[4]).unwrap();
 
-        let circuit = SoftmaxCircuit::<F> {
+        let circuit = SigmoidCircuit::<F> {
             input: ValTensor::from(input),
         };
 

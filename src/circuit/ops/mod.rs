@@ -3,7 +3,7 @@ use std::{any::Any, error::Error, marker::PhantomData};
 use halo2_proofs::circuit::Region;
 use serde::{Deserialize, Serialize};
 
-use crate::{tensor::{self, Tensor, TensorError, TensorType, ValTensor}, fieldutils::i128_to_felt};
+use crate::{tensor::{self, Tensor, TensorError, TensorType, ValTensor}};
 use halo2curves::ff::PrimeField;
 
 use self::lookup::LookupOp;
