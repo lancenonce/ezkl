@@ -1,6 +1,8 @@
 use super::node::*;
 use super::vars::*;
 use super::GraphError;
+use super::ModelParams;
+use crate::circuit::lookup::LookupOp;
 use crate::circuit::ops::poly::PolyOp;
 use crate::circuit::BaseConfig as PolyConfig;
 use crate::circuit::Op;
@@ -20,7 +22,7 @@ use tract_onnx::prelude::InferenceModelExt;
 use tract_onnx::prelude::TypedFact;
 use tract_onnx::prelude::TypedOp;
 use tract_onnx::tract_hir::internal::Factoid;
-use tract_onnx::tract_hir::internal::GenericFactoid;
+// use tract_onnx::tract_hir::internal::GenericFactoid;
 //use clap::Parser;
 use core::panic;
 use halo2_proofs::{
@@ -31,8 +33,8 @@ use itertools::Itertools;
 use log::error;
 use log::{debug, info, trace};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::error::Error;
-use std::path::Path;
 use tabled::Table;
 use tract_onnx;
 use tract_onnx::prelude::Framework;
@@ -81,17 +83,17 @@ pub struct Model<F: PrimeField + TensorType + PartialOrd> {
 impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
     /// Creates an `Model` from a specified path to an Onnx file.
     /// # Arguments
-    /// * `path` - A path to an Onnx file.
+    /// * `reader` - A reader for an Onnx file.
     /// * `run_args` - [RunArgs]
     /// * `mode` - The [Mode] we're using the model in.
     /// * `visibility` - Which inputs to the model are public and private (params, inputs, outputs) using [VarVisibility].
     pub fn new(
-        path: impl AsRef<Path>,
+        reader: &mut dyn std::io::Read,
         run_args: RunArgs,
         mode: Mode,
         visibility: VarVisibility,
     ) -> Result<Self, Box<dyn Error>> {
-        let (model, nodes) = Self::load_onnx_model(path, run_args.scale, run_args.public_params)?;
+        let (model, nodes) = Self::load_onnx_model(reader, run_args.scale, run_args.public_params)?;
 
         let om = Model {
             inputs: model.inputs.iter().map(|o| o.node).collect(),
@@ -105,17 +107,48 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
         Ok(om)
     }
 
+    /// Generate model parameters for the circuit
+    pub fn gen_params(&self) -> Result<ModelParams, Box<dyn Error>> {
+        let instance_shapes = self.instance_shapes();
+        // this is the total number of variables we will need to allocate
+        // for the circuit
+        let num_constraints = if let Some(num_constraints) = self.run_args.allocated_constraints {
+            num_constraints
+        } else {
+            self.dummy_layout(&self.input_shapes()).unwrap()
+        };
+
+        // extract the requisite lookup ops from the model
+        let mut lookup_ops: Vec<LookupOp> = self
+            .nodes
+            .iter()
+            .map(|(_, n)| n.opkind.required_lookups())
+            .flatten()
+            .collect();
+
+        let set: HashSet<_> = lookup_ops.drain(..).collect(); // dedup
+        lookup_ops.extend(set.into_iter().sorted());
+
+        Ok(ModelParams {
+            run_args: self.run_args.clone(),
+            visibility: self.visibility.clone(),
+            instance_shapes,
+            num_constraints,
+            required_lookups: lookup_ops,
+        })
+    }
+
     /// Runs a forward pass on sample data !
     /// # Arguments
-    /// * `path` - A path to an Onnx file.
+    /// * `reader` - A reader for an Onnx file.
+    /// * `model_inputs` - A vector of [Tensor]s to use as inputs to the model.
     /// * `run_args` - [RunArgs]
     pub fn forward(
-        model_path: impl AsRef<Path>,
+        reader: &mut dyn std::io::Read,
         model_inputs: &[Tensor<i128>],
         run_args: RunArgs,
     ) -> Result<Vec<Tensor<f32>>, Box<dyn Error>> {
-        let (model, nodes) =
-            Self::load_onnx_model(model_path, run_args.scale, run_args.public_params)?;
+        let (model, nodes) = Self::load_onnx_model(reader, run_args.scale, run_args.public_params)?;
 
         let mut results: BTreeMap<&usize, Tensor<i128>> = BTreeMap::new();
         let mut max_lookup_inputs = 0;
@@ -151,7 +184,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
         }
 
         let output_nodes = model.outputs.iter();
-        info!(
+        debug!(
             "model outputs are nodes: {:?}",
             output_nodes.clone().map(|o| o.node).collect_vec()
         );
@@ -204,41 +237,104 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
 
     /// Loads an Onnx model from a specified path.
     /// # Arguments
-    /// * `path` - A path to an Onnx file.
+    /// * `reader` - A reader for an Onnx file.
     /// * `scale` - The scale to use for quantization.
+    /// * `public_params` - Whether to make the params public.
     fn load_onnx_model(
-        path: impl AsRef<Path>,
+        reader: &mut dyn std::io::Read,
         scale: u32,
         public_params: bool,
     ) -> Result<(Graph<TypedFact, Box<dyn TypedOp>>, BTreeMap<usize, Node<F>>), Box<dyn Error>>
     {
-        let mut model = tract_onnx::onnx()
-            .model_for_path(path)
-            .map_err(|_| GraphError::ModelLoad)?;
-        // .into_optimized()?;
+        let mut model = tract_onnx::onnx().model_for_read(reader).map_err(|e| {
+            error!("Error loading model: {}", e);
+            GraphError::ModelLoad
+        })?;
+
+        let sequence_length = &mut None;
 
         for (i, id) in model.clone().inputs.iter().enumerate() {
             let input = model.node(id.node);
 
-            // add batch dim
             let mut dims = vec![];
             let extracted_dims: Vec<usize> = input.outputs[0]
                 .fact
                 .shape
                 .dims()
                 .filter_map(|x| x.concretize())
-                .map(|x| x.to_i64().unwrap() as usize)
+                .map(|x| match x.to_i64() {
+                    Ok(x) => x as usize,
+                    Err(_e) => {
+                        if x.to_string() == "batch_size" {
+                            1
+                        } else if x.to_string() == "sequence_length" {
+                            // get user input as usize from std in
+                            if let Some(len) = sequence_length {
+                                *len
+                            } else {
+                                let mut input = String::new();
+                                info!("Enter sequence length: ");
+                                std::io::stdin()
+                                    .read_line(&mut input)
+                                    .expect("Failed to read line");
+                                let input: usize =
+                                    input.trim().parse().expect("Please type a number!");
+                                *sequence_length = Some(input);
+                                input
+                            }
+                        } else {
+                            panic!("Unknown dimension {}: {:?}", x.to_string(), x)
+                        }
+                    }
+                })
                 .collect();
 
-            // if we have unknown / unspecified dims, add a batch dim of 1
-            if let GenericFactoid::Only(elem) = input.outputs[0].fact.shape.rank() {
-                if (elem as usize) > extracted_dims.len() {
-                    dims.push(1);
-                }
-            };
             dims.extend(extracted_dims);
 
             model = model.with_input_fact(i, f32::fact(dims).into())?;
+        }
+
+        for (i, id) in model.clone().outputs.iter().enumerate() {
+            let output = model.node(id.node);
+
+            // add batch dim
+            let mut dims = vec![];
+            let extracted_dims: Vec<usize> = output.outputs[0]
+                .fact
+                .shape
+                .dims()
+                .filter_map(|x| x.concretize())
+                .map(|x| match x.to_i64() {
+                    Ok(x) => x as usize,
+                    Err(_e) => {
+                        if x.to_string() == "batch_size" {
+                            1
+                        } else if x.to_string() == "sequence_length"
+                            || x.to_string() == "past_sequence_length + sequence_length"
+                        {
+                            if let Some(len) = sequence_length {
+                                *len
+                            } else {
+                                let mut input = String::new();
+                                info!("Enter sequence length: ");
+                                std::io::stdin()
+                                    .read_line(&mut input)
+                                    .expect("Failed to read line");
+                                let input: usize =
+                                    input.trim().parse().expect("Please type a number!");
+                                *sequence_length = Some(input);
+                                input
+                            }
+                        } else {
+                            panic!("Unknown dimension: {}", x)
+                        }
+                    }
+                })
+                .collect();
+
+            dims.extend(extracted_dims);
+
+            model = model.with_output_fact(i, f32::fact(dims).into())?;
         }
         // Note: do not optimize the model, as the layout will depend on underlying hardware
         let model = model.into_typed()?.into_decluttered()?;
@@ -249,6 +345,17 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
             nodes.insert(i, n);
         }
 
+        nodes = nodes
+            .iter()
+            .filter(|(_, node)| {
+                node.opkind
+                    .as_any()
+                    .downcast_ref::<crate::circuit::ops::Constant<F>>()
+                    .is_none()
+            })
+            .map(|(idx, node)| (*idx, node.clone()))
+            .collect();
+
         debug!("\n {}", model);
 
         debug!("\n {}", Table::new(nodes.iter()).to_string());
@@ -258,26 +365,29 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
 
     /// Creates a `Model` from parsed CLI arguments
     /// # Arguments
-    /// * `cli` - [Cli]
+    /// * `cli` - A [Cli] struct holding parsed CLI arguments.
     pub fn from_ezkl_conf(cli: Cli) -> Result<Self, Box<dyn Error>> {
         let visibility = VarVisibility::from_args(cli.args.clone())?;
         match cli.command {
-            Commands::Table { model } | Commands::Mock { model, .. } => {
-                Model::new(model, cli.args, Mode::Mock, visibility)
-            }
-            Commands::Prove { model, .. }
-            | Commands::Verify { model, .. }
-            | Commands::Aggregate { model, .. } => {
-                Model::new(model, cli.args, Mode::Prove, visibility)
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            Commands::CreateEVMVerifier { model, .. } => {
-                Model::new(model, cli.args, Mode::Prove, visibility)
-            }
+            Commands::Table { model } | Commands::Mock { model, .. } => Model::new(
+                &mut std::fs::File::open(model)?,
+                cli.args,
+                Mode::Mock,
+                visibility,
+            ),
+            Commands::Prove { model, .. } | Commands::Setup { model, .. } => Model::new(
+                &mut std::fs::File::open(model)?,
+                cli.args,
+                Mode::Prove,
+                visibility,
+            ),
             #[cfg(feature = "render")]
-            Commands::RenderCircuit { model, .. } => {
-                Model::new(model, cli.args, Mode::Table, visibility)
-            }
+            Commands::RenderCircuit { model, .. } => Model::new(
+                &mut std::fs::File::open(model)?,
+                cli.args,
+                Mode::Table,
+                visibility,
+            ),
             _ => panic!(),
         }
     }
@@ -288,70 +398,42 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
         Self::from_ezkl_conf(conf)
     }
 
-    /// Configures an `Model`. Does so one execution `bucket` at a time. Each bucket holds either:
-    /// a) independent lookup operations (i.e operations that don't feed into one another so can be processed in parallel).
-    /// b) operations that can be fused together, i.e the output of one op might feed into another.
+    /// Configures a model for the circuit
     /// # Arguments
-    /// * `meta` - Halo2 ConstraintSystem.
-    /// * `advices` - A `VarTensor` holding columns of advices. Must be sufficiently large to configure all the nodes loaded in `self.nodes`.
+    /// * `meta` - The constraint system.
+    /// * `vars` - The variables for the circuit.
+    /// * `run_args` - [RunArgs]
+    /// * `required_lookups` - The required lookup operations for the circuit.
     pub fn configure(
-        &self,
         meta: &mut ConstraintSystem<F>,
         vars: &mut ModelVars<F>,
+        run_args: RunArgs,
+        required_lookups: Vec<LookupOp>,
     ) -> Result<PolyConfig<F>, Box<dyn Error>> {
         info!("configuring model");
-
         let mut base_gate = PolyConfig::configure(
             meta,
             vars.advices[0..2].try_into()?,
             &vars.advices[2],
-            self.run_args.check_mode,
-            self.run_args.tolerance as i32,
+            run_args.check_mode,
+            run_args.tolerance as i32,
         );
 
-        let lookup_ops: BTreeMap<&usize, &Node<F>> = self
-            .nodes
-            .iter()
-            .filter(|(_, n)| n.opkind.required_lookups().len() > 0)
-            .collect();
-
-        for node in lookup_ops.values() {
-            self.conf_lookup(&mut base_gate, node, meta, vars)?;
+        for op in required_lookups {
+            let input = &vars.advices[0];
+            let output = &vars.advices[1];
+            base_gate.configure_lookup(meta, input, output, run_args.bits, &op)?;
         }
 
         Ok(base_gate)
     }
 
-    /// Configures a lookup table based operation. These correspond to operations that are represented in
-    /// the `circuit::eltwise` module.
-    /// # Arguments
-    ///
-    /// * `node` - The [Node] must represent a lookup based op.
-    /// * `meta` - Halo2 ConstraintSystem.
-    /// * `vars` - [ModelVars] for the model.
-    fn conf_lookup(
-        &self,
-        config: &mut PolyConfig<F>,
-        node: &Node<F>,
-        meta: &mut ConstraintSystem<F>,
-        vars: &mut ModelVars<F>,
-    ) -> Result<(), Box<dyn Error>> {
-        let input = &vars.advices[0];
-        let output = &vars.advices[1];
-
-        for op in node.opkind.required_lookups() {
-            config.configure_lookup(meta, input, output, self.run_args.bits, &op)?;
-        }
-
-        Ok(())
-    }
-
     /// Assigns values to the regions created when calling `configure`.
     /// # Arguments
-    ///
     /// * `config` - [ModelConfig] holding all node configs.
     /// * `layouter` - Halo2 Layouter.
     /// * `inputs` - The values to feed into the circuit.
+    /// * `vars` - The variables for the circuit.
     pub fn layout(
         &self,
         mut config: ModelConfig<F>,
@@ -359,7 +441,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
         inputs: &[ValTensor<F>],
         vars: &ModelVars<F>,
     ) -> Result<(), Box<dyn Error>> {
-        info!("model layout");
+        info!("model layout...");
         let mut results = BTreeMap::<usize, ValTensor<F>>::new();
         for (i, input_idx) in self.inputs.iter().enumerate() {
             if self.visibility.input.is_public() {
@@ -417,7 +499,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
                 }
 
                 let output_nodes = self.outputs.iter();
-                info!(
+                debug!(
                     "model outputs are nodes: {:?}",
                     output_nodes.clone().collect_vec()
                 );
@@ -428,7 +510,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
                 // pack outputs if need be
                 if self.run_args.pack_base > 1 {
                     for i in 0..outputs.len() {
-                        info!("packing outputs...");
+                        debug!("packing outputs...");
                         outputs[i] = config
                             .base
                             .layout(
@@ -478,14 +560,11 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
         Ok(())
     }
 
-    /// Assigns values to the regions created when calling `configure`.
+    /// Assigns dummy values to the regions created when calling `configure`.
     /// # Arguments
-    ///
-    /// * `config` - [ModelConfig] holding all node configs.
-    /// * `layouter` - Halo2 Layouter.
-    /// * `inputs` - The values to feed into the circuit.
+    /// * `input_shapes` - The shapes of the inputs to the model.
     pub fn dummy_layout(&self, input_shapes: &[Vec<usize>]) -> Result<usize, Box<dyn Error>> {
-        info!("dummy model layout");
+        info!("calculating num of constraints using dummy model layout...");
         let mut results = BTreeMap::<usize, ValTensor<F>>::new();
 
         let inputs: Vec<ValTensor<F>> = input_shapes
@@ -531,7 +610,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
         }
 
         let output_nodes = self.outputs.iter();
-        info!(
+        debug!(
             "model outputs are nodes: {:?}",
             output_nodes.clone().collect_vec()
         );
@@ -542,7 +621,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
         // pack outputs if need be
         if self.run_args.pack_base > 1 {
             for i in 0..outputs.len() {
-                info!("packing outputs...");
+                debug!("packing outputs...");
                 outputs[i] = dummy_config
                     .layout(
                         &mut None,

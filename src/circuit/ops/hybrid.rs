@@ -1,4 +1,7 @@
+use std::any::Any;
+
 use halo2_proofs::circuit::Region;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     circuit::layouts,
@@ -10,8 +13,8 @@ use super::{lookup::LookupOp, Op};
 use halo2curves::ff::PrimeField;
 
 #[allow(missing_docs)]
-/// An enum representing the operations that can be used to express more complex operations via accumulation
-#[derive(Clone, Debug)]
+/// An enum representing the operations that consist of both lookups and arithmetic operations.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HybridOp {
     Max {
         axes: Vec<usize>,
@@ -41,6 +44,10 @@ impl HybridOp {
 }
 
 impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     /// Matches a [Op] to an operation in the `tensor::ops` module.
     fn f(&self, inputs: &[Tensor<i128>]) -> Result<Tensor<i128>, TensorError> {
         match &self {
@@ -53,7 +60,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
                 ..
             } => tensor::ops::max_pool2d(&inputs[0], padding, stride, pool_dims),
             HybridOp::Min { axes, .. } => Ok(tensor::ops::min_axes(&inputs[0], axes)?),
-            HybridOp::Softmax { scales } => Ok(tensor::ops::nonlinearities::softmax(
+            HybridOp::Softmax { scales } => Ok(tensor::ops::nonlinearities::multi_dim_softmax(
                 &inputs[0], scales.0, scales.1,
             )),
         }
@@ -103,7 +110,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
                 axes,
                 offset,
             )?),
-            HybridOp::Softmax { scales } => Some(layouts::softmax(
+            HybridOp::Softmax { scales } => Some(layouts::multi_dim_softmax(
                 config,
                 region,
                 values[..].try_into()?,
