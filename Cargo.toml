@@ -9,6 +9,7 @@ edition = "2021"
 # Name to be imported within python
 # Example: import ezkl_lib
 name = "ezkl_lib"
+path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 

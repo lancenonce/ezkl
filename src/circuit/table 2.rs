@@ -4,7 +4,7 @@ use halo2curves::ff::PrimeField;
 
 use halo2_proofs::{
     circuit::{Layouter, Value},
-    plonk::{ConstraintSystem, TableColumn},
+    plonk::{ConstraintSystem, TableColumn, Column, Advice},
 };
 
 use crate::{
@@ -111,6 +111,7 @@ pub struct DynamicTable<F: PrimeField> {
     _marker: PhantomData<F>,
 }
 
+//TODO: Integrate with softmax and other dynamic lookups
 impl<F: PrimeField + TensorType + PartialOrd> DynamicTable<F> {
     /// Configure the table
     pub fn configure(
