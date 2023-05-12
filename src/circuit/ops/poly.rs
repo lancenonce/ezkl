@@ -1,4 +1,6 @@
 use itertools::Itertools;
+use std::ops::Range;
+
 
 use crate::{
     circuit::layouts,
@@ -50,6 +52,11 @@ pub enum PolyOp<F: PrimeField + TensorType + PartialOrd> {
     GlobalSumPool,
     Iff,
     RangeCheck(i32),
+    Slice {
+        axis: usize,
+        start: usize,
+        end: usize,
+    },
 }
 
 impl<F: PrimeField + TensorType + PartialOrd> PolyOp<F> {
@@ -117,6 +124,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             PolyOp::RangeCheck(..) => "RANGECHECK",
             PolyOp::Iff => "IFF",
             PolyOp::Gather { .. } => "GATHER",
+            PolyOp::Slice { .. } => "SLICE",
         }
     }
 
@@ -213,6 +221,14 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                     - ((Tensor::from(vec![1_i128].into_iter()) - mask.clone())? * b.clone())?;
 
                 Ok(out?)
+            }
+            PolyOp::Slice { axis, start, end } => {
+                if 1 != inputs.len() {
+                    return Err(TensorError::DimMismatch("slice inputs".to_string()));
+                }
+                let mut t = inputs[0].clone();
+                t.get_slice(&[Range { start: *start, end: *end }]);
+                Ok(t)
             }
         }
     }
@@ -315,6 +331,14 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                 layouts::range_check(config, region, values[..].try_into()?, offset, *tol)?
             }
             PolyOp::GlobalSumPool => unreachable!(),
+            PolyOp::Slice { axis, start, end } => {
+                if 1 != inputs.len() {
+                    return Err(TensorError::DimMismatch("slice inputs".to_string()));
+                }
+                let mut t = inputs[0].clone();
+                t.get_slice(&[Range { start: *start, end: *end }]);
+                Ok(t)
+            }
         }))
     }
 
@@ -369,6 +393,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             PolyOp::Pack(_, _) => in_scales[0],
             PolyOp::RangeCheck(_) => in_scales[0],
             PolyOp::GlobalSumPool => in_scales[0],
+            PolyOp::Slice => in_scales[0],
         }
     }
 

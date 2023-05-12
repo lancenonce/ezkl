@@ -12,6 +12,7 @@ use halo2curves::ff::PrimeField;
 use log::{trace, warn};
 use tract_onnx::prelude::{DatumType, Node as OnnxNode, TypedFact, TypedOp};
 use tract_onnx::tract_core::ops::array::Gather;
+use tract_onnx::tract_core::ops::array::Slice;
 use tract_onnx::tract_core::ops::einsum::EinSum;
 // use tract_onnx::tract_core::ops::binary::UnaryOp;
 // use tract_onnx::tract_core::ops::matmul::MatMulUnary;
@@ -214,6 +215,23 @@ fn load_eltwise_op(
     let op: &ElementWiseOp = match op.downcast_ref::<ElementWiseOp>() {
         Some(b) => b,
         None => return Err(Box::new(GraphError::OpMismatch(idx, name))),
+    };
+
+    Ok(op.clone())
+}
+
+/// Extracts a Slice op from an onnx node.
+fn load_slice_op(
+    op: &dyn tract_onnx::prelude::Op,
+    idx: usize,
+    name: String,
+) -> Result<Slice, Box<dyn std::error::Error>> {
+    // Extract the slope layer hyperparams
+    let op: &Slice = match op.downcast_ref::<Slice>() {
+        Some(b) => b,
+        None => {
+            return Err(Box::new(TensorError::DimMismatch(name)));
+        }
     };
 
     Ok(op.clone())
@@ -713,6 +731,31 @@ pub fn new_op_from_onnx<F: PrimeField + TensorType + PartialOrd>(
         c => {
             warn!("Unknown op: {}", c);
             Box::new(crate::circuit::ops::Unknown)
+        }
+
+        "Slice" => {
+            let slice = load_slice_op(node.op(), idx, node.op().name().to_string())?;
+
+            let axis = slice
+                .axis
+                .iter()
+                .map(|x| {
+                    if *x == 0 {
+                        0
+                    } else {
+                        x - 1
+                    }
+                })
+                .collect();
+
+            let starts = slice.start.iter().map(|x| *x as usize).collect();
+            let ends = slice.end.iter().map(|x| *x as usize).collect();
+
+            Box::new(PolyOp::Slice {
+                axis: axis,
+                start: starts,
+                end: ends,
+            })
         }
     })
 }
