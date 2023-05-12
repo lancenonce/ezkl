@@ -222,12 +222,12 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
 
                 Ok(out?)
             }
-            PolyOp::Slice { axis, start, end } => {
+            PolyOp::Slice { axis: _, start, end } => {
                 if 1 != inputs.len() {
                     return Err(TensorError::DimMismatch("slice inputs".to_string()));
                 }
-                let mut t = inputs[0].clone();
-                t.get_slice(&[Range { start: *start, end: *end }]);
+                let t = inputs[0].clone();
+                t.get_slice(&[Range { start: *start, end: *end }])?;
                 Ok(t)
             }
         }
@@ -331,13 +331,10 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                 layouts::range_check(config, region, values[..].try_into()?, offset, *tol)?
             }
             PolyOp::GlobalSumPool => unreachable!(),
-            PolyOp::Slice { axis, start, end } => {
-                if 1 != inputs.len() {
-                    return Err(TensorError::DimMismatch("slice inputs".to_string()));
-                }
-                let mut t = inputs[0].clone();
-                t.get_slice(&[Range { start: *start, end: *end }]);
-                Ok(t)
+            PolyOp::Slice { axis: _, start, end } => {
+                // what would be the correct index?
+                let t = values[0].clone();
+                t.get_slice(&[Range { start: *start, end: *end }])?
             }
         }))
     }
@@ -393,7 +390,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             PolyOp::Pack(_, _) => in_scales[0],
             PolyOp::RangeCheck(_) => in_scales[0],
             PolyOp::GlobalSumPool => in_scales[0],
-            PolyOp::Slice => in_scales[0],
+            PolyOp::Slice { .. } => in_scales[0],
         }
     }
 

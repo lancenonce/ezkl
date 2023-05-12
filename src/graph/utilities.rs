@@ -18,7 +18,7 @@ use tract_onnx::tract_core::ops::einsum::EinSum;
 // use tract_onnx::tract_core::ops::matmul::MatMulUnary;
 use tract_onnx::tract_core::ops::element_wise::ElementWiseOp;
 use tract_onnx::tract_core::ops::nn::{LeakyRelu, Reduce, Softmax};
-use tract_onnx::tract_hir::internal::AxisOp;
+use tract_onnx::tract_hir::internal::{AxisOp, DimLike};
 use tract_onnx::tract_hir::ops::cnn::ConvUnary;
 use tract_onnx::tract_hir::ops::konst::Const;
 use tract_onnx::tract_hir::{
@@ -223,7 +223,6 @@ fn load_eltwise_op(
 /// Extracts a Slice op from an onnx node.
 fn load_slice_op(
     op: &dyn tract_onnx::prelude::Op,
-    idx: usize,
     name: String,
 ) -> Result<Slice, Box<dyn std::error::Error>> {
     // Extract the slope layer hyperparams
@@ -279,6 +278,19 @@ pub fn new_op_from_onnx<F: PrimeField + TensorType + PartialOrd>(
             inputs.pop();
 
             Box::new(crate::circuit::ops::poly::PolyOp::Gather { dim: axis, index })
+        }
+        "Slice" => {
+            let slice = load_slice_op(node.op(), node.op().name().to_string())?;
+
+            let axis = slice.axis;
+            let starts = slice.start.to_usize()?;
+            let ends = slice.end.to_usize()?;
+
+            Box::new(PolyOp::Slice {
+                axis: axis,
+                start: starts,
+                end: ends,
+            })
         }
         "Const" => {
             let op: Const = load_const(node.op(), idx, node.op().name().to_string())?;
@@ -731,31 +743,6 @@ pub fn new_op_from_onnx<F: PrimeField + TensorType + PartialOrd>(
         c => {
             warn!("Unknown op: {}", c);
             Box::new(crate::circuit::ops::Unknown)
-        }
-
-        "Slice" => {
-            let slice = load_slice_op(node.op(), idx, node.op().name().to_string())?;
-
-            let axis = slice
-                .axis
-                .iter()
-                .map(|x| {
-                    if *x == 0 {
-                        0
-                    } else {
-                        x - 1
-                    }
-                })
-                .collect();
-
-            let starts = slice.start.iter().map(|x| *x as usize).collect();
-            let ends = slice.end.iter().map(|x| *x as usize).collect();
-
-            Box::new(PolyOp::Slice {
-                axis: axis,
-                start: starts,
-                end: ends,
-            })
         }
     })
 }
