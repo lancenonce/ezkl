@@ -340,6 +340,45 @@ pub fn gather<T: TensorType>(
     Ok(output)
 }
 
+pub fn concat<T: TensorType>(
+    inputs: &[Tensor<T>],
+    axis: usize,
+) -> Result<Tensor<T>, TensorError> {
+    // Calculate the output tensor size
+    let mut output_size = inputs[0].dims().to_vec();
+    output_size[axis] = inputs.iter().map(|x| x.dims()[axis]).sum();
+
+    // Allocate memory for the output tensor
+    let mut output = Tensor::new(None, &output_size)?;
+    let cartesian_coord = output_size
+        .iter()
+        .map(|x| 0..*x)
+        .multi_cartesian_product()
+        .collect::<Vec<_>>();
+
+    output = output.enum_map(|i, _: T| {
+        let coord = cartesian_coord[i].clone();
+        let mut index = 0;
+        let mut input_index = 0;
+        let mut input_coord = coord.clone();
+        for (j, x) in coord.iter().enumerate() {
+            if j == dim {
+                input_index = *x;
+                input_coord[j] = 0;
+                break;
+            }
+            index += x;
+        }
+
+        Ok(inputs[input_index].get(&input_coord))
+    })?;
+
+    // Reshape the output tensor
+    output.reshape(&output_size);
+
+    Ok(output)
+}
+
 /// Sums a tensor along specific axes.
 /// # Arguments
 ///

@@ -219,6 +219,22 @@ fn load_eltwise_op(
     Ok(op.clone())
 }
 
+fn load_concat_op(
+    op: &dyn tract_onnx::prelude::Op,
+    idx: usize,
+    name: String,
+) -> Result<tract_onnx::tract_hir::ops::array::Concat, Box<dyn std::error::Error>> {
+    // Extract the slope layer hyperparams
+
+    let op: &tract_onnx::tract_hir::ops::array::Concat =
+        match op.downcast_ref::<tract_onnx::tract_hir::ops::array::Concat>() {
+            Some(b) => b,
+            None => return Err(Box::new(GraphError::OpMismatch(idx, name))),
+        };
+
+    Ok(op.clone())
+}
+
 /// Matches an onnx node to a [OpKind] and returns a [Node] with the corresponding [OpKind].  
 /// Arguments
 /// * `idx` - the index of the node in the graph.
@@ -261,6 +277,29 @@ pub fn new_op_from_onnx<F: PrimeField + TensorType + PartialOrd>(
             inputs.pop();
 
             Box::new(crate::circuit::ops::poly::PolyOp::Gather { dim: axis, index })
+        }
+        "Concat" => {
+            let op = load_concat_op(node.op(), idx, node.op().name().to_string())?;
+            let axis = op.axis;
+
+            let mut params = None;
+
+            for (idx, inp) in inputs.clone().iter().enumerate() {
+                let boxed_op = &inp.opkind;
+                if let Some(c) = boxed_op
+                    .as_any()
+                    .downcast_ref::<crate::circuit::ops::Constant<F>>()
+                {
+                    inputs.remove(idx);
+                    params = Some(tensor_to_valtensor::<F>(
+                        c.values.clone(),
+                        scale,
+                        public_params,
+                    )?);
+                }
+            }
+
+            Box::new(crate::circuit::ops::poly::PolyOp::Concat { axis: axis as usize })
         }
         "Const" => {
             let op: Const = load_const(node.op(), idx, node.op().name().to_string())?;

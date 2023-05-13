@@ -50,6 +50,9 @@ pub enum PolyOp<F: PrimeField + TensorType + PartialOrd> {
     GlobalSumPool,
     Iff,
     RangeCheck(i32),
+    Concat {
+        pub axis: usize,
+    },
 }
 
 impl<F: PrimeField + TensorType + PartialOrd> PolyOp<F> {
@@ -117,6 +120,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             PolyOp::RangeCheck(..) => "RANGECHECK",
             PolyOp::Iff => "IFF",
             PolyOp::Gather { .. } => "GATHER",
+            PolyOp::Concat { .. } => "CONCAT",
         }
     }
 
@@ -213,6 +217,12 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                     - ((Tensor::from(vec![1_i128].into_iter()) - mask.clone())? * b.clone())?;
 
                 Ok(out?)
+            }
+            PolyOp::Concat { axis } => {
+                if inputs.len() < 2 {
+                    return Err(TensorError::DimMismatch("concat inputs".to_string()));
+                }
+                tensor::ops::concat(&inputs, *axis)
             }
         }
     }
@@ -315,7 +325,12 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                 layouts::range_check(config, region, values[..].try_into()?, offset, *tol)?
             }
             PolyOp::GlobalSumPool => unreachable!(),
-        }))
+            PolyOp::Concat { axis } => {
+                // TODO: Dereference values to a [Tensor]
+                tensor::ops::concat(&values, *axis)?.into()
+            }
+        }
+    ))
     }
 
     fn out_scale(&self, in_scales: Vec<u32>, _g: u32) -> u32 {
