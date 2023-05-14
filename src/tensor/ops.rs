@@ -340,6 +340,25 @@ pub fn gather<T: TensorType>(
     Ok(output)
 }
 
+/// Concatenates a list of tensors along a specified axis.
+/// # Arguments
+/// * `inputs` - A slice of tensors to concatenate.
+/// * `axis` - The axis along which to concatenate the tensors.
+///
+/// # Examples
+/// ```
+/// use ezkl_lib::tensor::Tensor;
+/// use ezkl_lib::tensor::ops::concat;
+/// let x = Tensor::<i128>::new(Some(&[1, 2, 3]), &[3]).unwrap();
+/// let y = Tensor::<i128>::new(Some(&[4, 5, 6]), &[3]).unwrap();
+/// let result = concat(&[x, y], 0).unwrap();
+/// let expected = Tensor::<i128>::new(Some(&[1, 2, 3, 4, 5, 6]), &[6]).unwrap();
+/// assert_eq!(result, expected);
+/// ```
+///
+/// # Errors
+/// Returns a TensorError if the tensors in `inputs` have incompatible dimensions for concatenation along the specified `axis`.
+
 pub fn concat<T: TensorType>(
     inputs: &[Tensor<T>],
     axis: usize,

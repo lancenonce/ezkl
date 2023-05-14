@@ -283,23 +283,6 @@ pub fn new_op_from_onnx<F: PrimeField + TensorType + PartialOrd>(
             let op = load_concat_op(node.op(), idx, node.op().name().to_string())?;
             let axis = op.axis;
 
-            let mut params = None;
-
-            for (idx, inp) in inputs.clone().iter().enumerate() {
-                let boxed_op = &inp.opkind;
-                if let Some(c) = boxed_op
-                    .as_any()
-                    .downcast_ref::<crate::circuit::ops::Constant<F>>()
-                {
-                    inputs.remove(idx);
-                    params = Some(tensor_to_valtensor::<F>(
-                        c.values.clone(),
-                        scale,
-                        public_params,
-                    )?);
-                }
-            }
-
             Box::new(crate::circuit::ops::poly::PolyOp::Concat { axis: axis })
         }
         "Const" => {

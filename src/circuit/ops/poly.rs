@@ -325,10 +325,27 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
                 layouts::range_check(config, region, values[..].try_into()?, offset, *tol)?
             }
             PolyOp::GlobalSumPool => unreachable!(),
-            PolyOp::Concat { axis } => {
-                // TODO: Dereference values to a [Tensor]
-                tensor::ops::concat(&values, *axis)?.into()
+            PolyOp::Concat { axis: _ } => {
+                if values.is_empty() {
+                    return Err(Box::new(TensorError::WrongMethod));
+                }
+                let mut result = values[0].clone();
+                for tensor in values.iter().skip(1) {
+                    match (&result, tensor) {
+                        (ValTensor::Value { .. }, ValTensor::Value { .. }) => {
+                            result = result.concat(tensor.clone())?;
+                        },
+                        _ => {
+                            return Err(Box::new(TensorError::WrongMethod));
+                        }
+                    }
+                }
+                result
             }
+            
+            
+            
+            
         }
     ))
     }
@@ -384,7 +401,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             PolyOp::Pack(_, _) => in_scales[0],
             PolyOp::RangeCheck(_) => in_scales[0],
             PolyOp::GlobalSumPool => in_scales[0],
-            PolyOp::Concat { axis } =>  in_scales[0],
+            PolyOp::Concat { axis: _ } =>  in_scales[0],
         }
     }
 
