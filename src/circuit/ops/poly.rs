@@ -51,7 +51,7 @@ pub enum PolyOp<F: PrimeField + TensorType + PartialOrd> {
     Iff,
     RangeCheck(i32),
     Concat {
-        pub axis: usize,
+        axis: usize,
     },
 }
 
@@ -384,6 +384,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for PolyOp<F> {
             PolyOp::Pack(_, _) => in_scales[0],
             PolyOp::RangeCheck(_) => in_scales[0],
             PolyOp::GlobalSumPool => in_scales[0],
+            PolyOp::Concat { axis } =>  in_scales[0],
         }
     }
 

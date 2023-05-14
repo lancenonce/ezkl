@@ -362,7 +362,7 @@ pub fn concat<T: TensorType>(
         let mut input_index = 0;
         let mut input_coord = coord.clone();
         for (j, x) in coord.iter().enumerate() {
-            if j == dim {
+            if j == axis {
                 input_index = *x;
                 input_coord[j] = 0;
                 break;

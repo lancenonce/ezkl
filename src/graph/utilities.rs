@@ -12,6 +12,7 @@ use halo2curves::ff::PrimeField;
 use log::{trace, warn};
 use tract_onnx::prelude::{DatumType, Node as OnnxNode, TypedFact, TypedOp};
 use tract_onnx::tract_core::ops::array::Gather;
+// use tract_onnx::tract_core::ops::array::TypedConcat;
 use tract_onnx::tract_core::ops::einsum::EinSum;
 // use tract_onnx::tract_core::ops::binary::UnaryOp;
 // use tract_onnx::tract_core::ops::matmul::MatMulUnary;
@@ -223,11 +224,11 @@ fn load_concat_op(
     op: &dyn tract_onnx::prelude::Op,
     idx: usize,
     name: String,
-) -> Result<tract_onnx::tract_hir::ops::array::Concat, Box<dyn std::error::Error>> {
+) -> Result<tract_onnx::tract_core::ops::array::TypedConcat, Box<dyn std::error::Error>> {
     // Extract the slope layer hyperparams
 
-    let op: &tract_onnx::tract_hir::ops::array::Concat =
-        match op.downcast_ref::<tract_onnx::tract_hir::ops::array::Concat>() {
+    let op: &tract_onnx::tract_core::ops::array::TypedConcat =
+        match op.downcast_ref::<tract_onnx::tract_core::ops::array::TypedConcat>() {
             Some(b) => b,
             None => return Err(Box::new(GraphError::OpMismatch(idx, name))),
         };
@@ -299,7 +300,7 @@ pub fn new_op_from_onnx<F: PrimeField + TensorType + PartialOrd>(
                 }
             }
 
-            Box::new(crate::circuit::ops::poly::PolyOp::Concat { axis: axis as usize })
+            Box::new(crate::circuit::ops::poly::PolyOp::Concat { axis: axis })
         }
         "Const" => {
             let op: Const = load_const(node.op(), idx, node.op().name().to_string())?;
