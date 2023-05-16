@@ -34,13 +34,14 @@ def test_table_1l_average():
     )
 
     expected_table = \
-        """+-------+---------+-----------+--------+-----------+-----+
-| usize | opkind  | out_scale | inputs | out_dims  | idx |
-+-------+---------+-----------+--------+-----------+-----+
-| 0     | Input   | 7         |        | [1, 5, 5] | 0   |
-+-------+---------+-----------+--------+-----------+-----+
-| 1     | SUMPOOL | 7         | [0]    | [1, 3, 3] | 1   |
-+-------+---------+-----------+--------+-----------+-----+"""
+        """ 
+┌─────────┬───────────┬────────┬───────────┬─────┐
+│ opkind  │ out_scale │ inputs │ out_dims  │ idx │
+├─────────┼───────────┼────────┼───────────┼─────┤
+│ Input   │ 7         │        │ [1, 5, 5] │ 0   │
+├─────────┼───────────┼────────┼───────────┼─────┤
+│ SUMPOOL │ 7         │ [0]    │ [1, 3, 3] │ 1   │
+└─────────┴───────────┴────────┴───────────┴─────┘"""
     assert ezkl_lib.table(path) == expected_table
 
 
@@ -49,7 +50,7 @@ def test_gen_srs():
     Test for gen_srs() with 17 logrows.
     You may want to comment this test as it takes a long time to run
     """
-    ezkl_lib.gen_srs(params_path)
+    ezkl_lib.gen_srs(params_path, 17)
     assert os.path.isfile(params_path)
 
 
@@ -177,6 +178,7 @@ def test_prove():
         params_path,
         "poseidon",
         "single",
+        circuit_params_path,
     )
     assert res == True
     assert os.path.isfile(proof_path)
@@ -196,6 +198,5 @@ def test_verify():
         circuit_params_path,
         vk_path,
         params_path,
-        "poseidon",
     )
     assert res == True
