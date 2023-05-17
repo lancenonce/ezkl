@@ -263,7 +263,6 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
     /// # Arguments
     /// * `reader` - A reader for an Onnx file.
     /// * `model_inputs` - A vector of [Tensor]s to use as inputs to the model.
-    /// * `run_args` - [RunArgs]
     pub fn forward(
         &self,
         model_inputs: &[Tensor<i128>],
@@ -599,6 +598,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
     pub fn configure(
         meta: &mut ConstraintSystem<F>,
         vars: &mut ModelVars<F>,
+        run_args: &RunArgs,
         num_bits: usize,
         tolerance: Tolerance,
         required_lookups: Vec<LookupOp>,
@@ -621,7 +621,12 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
         let input = &vars.advices[0];
         let output = &vars.advices[1];
         for op in required_lookups {
-            base_gate.configure_lookup(meta, input, output, num_bits, &op)?;
+            // change this a case to configure_dyn_lookups
+            if run_args.dynamic_lookups {
+                base_gate.configure_dyn_lookup(meta, input, output, num_bits, &op)?;
+            } else {
+                base_gate.configure_lookup(meta, input, output, num_bits, &op)?;
+            }
         }
 
         Ok(base_gate)
@@ -649,9 +654,11 @@ impl<F: PrimeField + TensorType + PartialOrd> Model<F> {
                 results.insert(*input_idx, inputs[i].clone());
             }
         }
-
-        config.base.layout_tables(layouter)?;
-
+        if self.run_args.dynamic_lookups {
+            config.base.layout_dyn_tables(layouter)?;
+        } else {
+            config.base.layout_tables(layouter)?;
+        }
         layouter.assign_region(
             || "model",
             |mut region| {

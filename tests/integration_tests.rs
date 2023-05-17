@@ -382,9 +382,32 @@ mod native_tests {
             }
 
             });
-    }
+        }
     };
 }
+
+    macro_rules! test_dynamic_lookups {
+        () => {
+            #[cfg(test)]
+            mod dyn_tests {
+                use seq_macro::seq;
+                use test_case::test_case;
+                use crate::native_tests::PACKING_TESTS;
+                use crate::native_tests::mock_dynamic_lookups;
+
+                seq!(N in 0..=13 {
+
+                #(#[test_case(PACKING_TESTS[N])])*
+                fn mock_dynamic_lookups_(test: &str) {
+                    crate::native_tests::init_binary();
+                    mock_dynamic_lookups(test.to_string());
+                }
+
+                });
+
+        }
+        };
+    }
 
     test_func!();
     test_func_aggr!();
@@ -392,6 +415,7 @@ mod native_tests {
     test_func_examples!();
     test_neg_examples!();
     test_packed_func!();
+    test_dynamic_lookups!();
 
     // Mock prove (fast, but does not cover some potential issues)
     fn neg_mock(example_name: String, counter_example: String) {
@@ -574,6 +598,24 @@ mod native_tests {
                 "-K=17",
                 "--public-inputs=true",
                 "--pack-base=2",
+            ])
+            .status()
+            .expect("failed to execute process");
+        assert!(status.success());
+    }
+
+    // Mock prove (fast, but does not cover some potential issues)
+    fn mock_dynamic_lookups(example_name: String) {
+        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+            .args([
+                "mock",
+                "-D",
+                format!("./examples/onnx/{}/input.json", example_name).as_str(),
+                "-M",
+                format!("./examples/onnx/{}/network.onnx", example_name).as_str(),
+                "--bits=16",
+                "-K=17",
+                "--dynamic-lookups=true",
             ])
             .status()
             .expect("failed to execute process");

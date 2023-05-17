@@ -124,6 +124,9 @@ pub struct RunArgs {
     /// the number of constraints the circuit might use. If not specified, this will be calculated using a 'dummy layout' pass.
     #[arg(long)]
     pub allocated_constraints: Option<usize>,
+    /// Enable dynamic lookups
+    #[arg(long, default_value = "false", action = clap::ArgAction::Set)]
+    pub dynamic_lookups: bool,
 }
 
 #[allow(missing_docs)]

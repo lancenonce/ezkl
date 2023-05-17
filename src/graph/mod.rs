@@ -264,6 +264,7 @@ impl<F: PrimeField + TensorType + PartialOrd> Circuit<F> for ModelCircuit<F> {
         let base = Model::<F>::configure(
             cs,
             &mut vars,
+            &params.run_args,
             params.run_args.bits,
             params.run_args.tolerance,
             params.required_lookups,
