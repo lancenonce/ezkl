@@ -69,4 +69,9 @@ mod wasm32 {
         // should not fail
         assert!(value);
     }
+
+    #[wasm_bindgen_test]
+    async fn setup_test() {
+        
+    }
 }

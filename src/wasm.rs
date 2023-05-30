@@ -26,6 +26,39 @@ use crate::graph::{ModelCircuit, ModelParams};
 use crate::pfsys::Snarkbytes;
 
 #[wasm_bindgen]
+pub fn get_pk(){
+    let pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, ModelCircuit<Fr>>(&circuit, &params)
+        .map_err(Box::<dyn Error>::from)?;
+
+    bincode::serialize(&pk.to_bytes()).unwrap()
+}
+
+#[wasm_bindgen]
+pub fn get_vk(
+    pk: wasm_bindgen::Clamped<Vec<u8>>,
+    circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
+    params_ser: wasm_bindgen::Clamped<Vec<u8>>,
+){
+    let mut reader = std::io::BufReader::new(&params_ser[..]);
+    let pk = ProvingKey::<G1Affine>::read::<_, ModelCircuit<Fr>>(
+        &mut reader,
+        halo2_proofs::SerdeFormat::RawBytes,
+        circuit_params_ser.clone(),
+    )
+    .unwrap();
+
+    let vk = pk.get_vk();
+
+    bincode::serialize(&vk.to_bytes()).unwrap()
+}
+
+#[wasm_bindgen]
+pub fn get_circuit_params(){
+    let circuit = ModelCircuit::<Fr>::from_arg(&data, CheckMode::UNSAFE)?;
+    let circuit_params = circuit.params;
+}
+
+#[wasm_bindgen]
 /// Verify proof in browser using wasm
 pub fn verify_wasm(
     proof_js: wasm_bindgen::Clamped<Vec<u8>>,
