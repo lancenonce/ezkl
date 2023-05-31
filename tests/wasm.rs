@@ -71,7 +71,39 @@ mod wasm32 {
     }
 
     #[wasm_bindgen_test]
-    async fn setup_test() {
+    async fn gen_circuit_params_test() {
+        let run_args = RunArgs {
+            tolerance: Tolerance::default(),
+            scale: 7,
+            bits: 16,
+            logrows: 17,
+            public_inputs: false,
+            public_outputs: true,
+            public_params: false,
+            pack_base: 1,
+            allocated_constraints: Some(1000), // assuming an arbitrary value here for the sake of the example
+        };
+
+        let serialized_run_args = bincode::serialize(&run_args).expect("Failed to serialize RunArgs");
+
+         // get serialized Varvisibility
+        let var_visibility = VarVisibility::from_args(run_args).expect("Failed to create VarVisibility");
+        let serialized_var_visibility = bincode::serialize(&var_visibility).expect("Failed to serialize VarVisibility");
+
+        let circuit_params = gen_circuit_params(
+            wasm_bindgen::Clamped(serialized_run_args),
+            wasm_bindgen::Clamped(serialized_var_visibility),
+        );
+
+    }
+
+    #[wasm_bindgen_test]
+    async fn gen_pk_test() {
+        
+    }
+
+    #[wasm_bindgen_test]
+    async fn gen_vk_test() {
         
     }
 }
