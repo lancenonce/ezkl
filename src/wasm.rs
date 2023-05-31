@@ -22,17 +22,37 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
-use crate::circuit::CheckMode;
 use crate::execute::{create_proof_circuit_kzg, verify_proof_circuit_kzg};
 use crate::graph::{ModelCircuit, ModelParams};
 use crate::pfsys::{create_keys, Snarkbytes};
 
+// get Runargs and visibility from params
+// deserialize run args and visibility, generate model, then generate circuit, then return circuit parameters
 /// Generate circuit params in browser
 #[wasm_bindgen]
-pub fn get_circuit_params(data_ser: wasm_bindgen::Clamped<Vec<u8>>) -> Vec<u8> {
-    // deserialize data as a ModelInput
+pub fn get_circuit_params(
+    data_ser: wasm_bindgen::Clamped<Vec<u8>>,
+    circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
+    run_args_ser: wasm_bindgen::Clamped<Vec<u8>>,
+    visibility_ser: wasm_bindgen::Clamped<Vec<u8>>,
+) -> Vec<u8> {
+
     let data = bincode::deserialize(&data_ser[..]).unwrap();
-    let circuit = ModelCircuit::<Fr>::from_arg(&data, CheckMode::UNSAFE).unwrap();
+    let run_args: _ = bincode::deserialize(&run_args_ser[..]).unwrap();
+    let visibility: _ = bincode::deserialize(&visibility_ser[..]).unwrap();
+
+    // read in circuit
+    let mut reader = std::io::BufReader::new(&circuit_ser[..]);
+    let model = crate::graph::Model::new(
+        &mut reader,
+        run_args,
+        // is this mode supposed to be prove?
+        crate::graph::Mode::Prove,
+        visibility,
+    )
+    .unwrap();
+    let circuit =
+        ModelCircuit::<Fr>::new(&data, Arc::new(model), crate::circuit::CheckMode::UNSAFE).unwrap();
     let circuit_params = circuit.params;
     bincode::serialize(&circuit_params).unwrap()
 }
@@ -43,7 +63,7 @@ pub fn get_pk(
     circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
     params_ser: wasm_bindgen::Clamped<Vec<u8>>,
     circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
-    data_ser: wasm_bindgen::Clamped<Vec<u8>>
+    data_ser: wasm_bindgen::Clamped<Vec<u8>>,
 ) -> Vec<u8> {
     let data = bincode::deserialize(&data_ser[..]).unwrap();
     // read in circuit params
@@ -66,17 +86,22 @@ pub fn get_pk(
         ModelCircuit::<Fr>::new(&data, Arc::new(model), crate::circuit::CheckMode::UNSAFE).unwrap();
 
     let pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, ModelCircuit<Fr>>(&circuit, &params)
-        .map_err(Box::<dyn std::error::Error>::from).unwrap();
+        .map_err(Box::<dyn std::error::Error>::from)
+        .unwrap();
 
     let mut serialized_pk = Vec::new();
-    pk.write(&mut serialized_pk, halo2_proofs::SerdeFormat::RawBytes).unwrap();
+    pk.write(&mut serialized_pk, halo2_proofs::SerdeFormat::RawBytes)
+        .unwrap();
 
     serialized_pk
 }
 
 /// Generate verifying key in browser
 #[wasm_bindgen]
-pub fn get_vk(pk: wasm_bindgen::Clamped<Vec<u8>>, circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>) -> Vec<u8> {
+pub fn get_vk(
+    pk: wasm_bindgen::Clamped<Vec<u8>>,
+    circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
+) -> Vec<u8> {
     // read in circuit params
     let circuit_params: ModelParams = bincode::deserialize(&circuit_params_ser[..]).unwrap();
 
@@ -92,7 +117,8 @@ pub fn get_vk(pk: wasm_bindgen::Clamped<Vec<u8>>, circuit_params_ser: wasm_bindg
     let vk = pk.get_vk();
 
     let mut serialized_vk = Vec::new();
-    vk.write(&mut serialized_vk, halo2_proofs::SerdeFormat::RawBytes).unwrap();
+    vk.write(&mut serialized_vk, halo2_proofs::SerdeFormat::RawBytes)
+        .unwrap();
 
     serialized_vk
 }
