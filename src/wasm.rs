@@ -47,7 +47,6 @@ pub fn get_circuit_params(
         &mut reader,
         run_args,
         // is this mode supposed to be prove?
-        crate::graph::Mode::Prove,
         visibility,
     )
     .unwrap();
