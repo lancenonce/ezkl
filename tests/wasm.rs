@@ -2,7 +2,10 @@
 #[cfg(test)]
 mod wasm32 {
     use ezkl_lib::pfsys::Snarkbytes;
-    use ezkl_lib::wasm::{prove_wasm, verify_wasm};
+    use ezkl_lib::wasm::{prove_wasm, verify_wasm, gen_circuit_params_wasm, gen_pk_wasm, gen_vk_wasm};
+    use ezkl_lib::graph::vars::VarVisibility;
+    use ezkl_lib::commands::RunArgs;
+    use ezkl_lib::circuit::Tolerance;
 
     pub use wasm_bindgen_rayon::init_thread_pool;
     use wasm_bindgen_test::*;
@@ -90,20 +93,43 @@ mod wasm32 {
         let var_visibility = VarVisibility::from_args(run_args).expect("Failed to create VarVisibility");
         let serialized_var_visibility = bincode::serialize(&var_visibility).expect("Failed to serialize VarVisibility");
 
-        let circuit_params = gen_circuit_params(
+        let circuit_params = gen_circuit_params_wasm(
+            wasm_bindgen::Clamped(INPUT.to_vec()),
+            wasm_bindgen::Clamped(NETWORK.to_vec()),
             wasm_bindgen::Clamped(serialized_run_args),
             wasm_bindgen::Clamped(serialized_var_visibility),
         );
+
+        assert!(circuit_params.len() > 0);
 
     }
 
     #[wasm_bindgen_test]
     async fn gen_pk_test() {
-        
+        let pk = gen_pk_wasm(
+            wasm_bindgen::Clamped(NETWORK.to_vec()),
+            wasm_bindgen::Clamped(KZG_PARAMS.to_vec()),
+            wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),
+            wasm_bindgen::Clamped(INPUT.to_vec()),
+        );
+
+        assert!(pk.len() > 0);
     }
 
     #[wasm_bindgen_test]
     async fn gen_vk_test() {
-        
+        let pk = gen_pk_wasm(
+            wasm_bindgen::Clamped(NETWORK.to_vec()),
+            wasm_bindgen::Clamped(KZG_PARAMS.to_vec()),
+            wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),
+            wasm_bindgen::Clamped(INPUT.to_vec()),
+        );
+
+        let vk = gen_vk_wasm(
+            wasm_bindgen::Clamped(pk),
+            wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),
+        );
+
+        assert!(vk.len() > 0);
     }
 }

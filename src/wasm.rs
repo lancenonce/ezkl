@@ -30,7 +30,7 @@ use crate::pfsys::{create_keys, Snarkbytes};
 // deserialize run args and visibility, generate model, then generate circuit, then return circuit parameters
 /// Generate circuit params in browser
 #[wasm_bindgen]
-pub fn get_circuit_params(
+pub fn gen_circuit_params_wasm(
     data_ser: wasm_bindgen::Clamped<Vec<u8>>,
     circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
     run_args_ser: wasm_bindgen::Clamped<Vec<u8>>,
@@ -59,7 +59,7 @@ pub fn get_circuit_params(
 
 /// Generate proving key in browser
 #[wasm_bindgen]
-pub fn get_pk(
+pub fn gen_pk_wasm(
     circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
     params_ser: wasm_bindgen::Clamped<Vec<u8>>,
     circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
@@ -98,7 +98,7 @@ pub fn get_pk(
 
 /// Generate verifying key in browser
 #[wasm_bindgen]
-pub fn get_vk(
+pub fn gen_vk_wasm(
     pk: wasm_bindgen::Clamped<Vec<u8>>,
     circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
 ) -> Vec<u8> {
