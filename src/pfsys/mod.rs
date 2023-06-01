@@ -27,10 +27,8 @@ use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Cursor, Read, Write};
 use std::ops::Deref;
 use std::path::PathBuf;
-use thiserror::Error as thisError;
-
-#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+use thiserror::Error as thisError;
 
 #[cfg(feature = "python-bindings")]
 use pyo3::prelude::*;
@@ -261,7 +259,6 @@ pub fn gen_srs<Scheme: CommitmentScheme>(k: u32) -> Scheme::ParamsProver {
     Scheme::ParamsProver::new(k)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Creates a [VerifyingKey] and [ProvingKey] for a [ModelCircuit] (`circuit`) with specific [CommitmentScheme] parameters (`params`).
 pub fn create_keys<Scheme: CommitmentScheme, F: PrimeField + TensorType, C: Circuit<F>>(
     circuit: &C,
@@ -282,25 +279,6 @@ where
     let now = Instant::now();
     let pk = keygen_pk(params, vk, &empty_circuit)?;
     info!("PK took {}", now.elapsed().as_secs());
-    Ok(pk)
-}
-
-#[cfg(target_arch = "wasm32")]
-/// Creates a [VerifyingKey] and [ProvingKey] for a [ModelCircuit] (`circuit`) with specific [CommitmentScheme] parameters (`params`) for the WASM target
-pub fn create_keys_wasm<Scheme: CommitmentScheme, F: PrimeField + TensorType, C: Circuit<F>>(
-    circuit: &C,
-    params: &'_ Scheme::ParamsProver,
-) -> Result<ProvingKey<Scheme::Curve>, halo2_proofs::plonk::Error>
-where
-    C: Circuit<Scheme::Scalar>,
-    <Scheme as CommitmentScheme>::Scalar: FromUniformBytes<64>,
-{
-    //	Real proof
-    let empty_circuit = <C as Circuit<F>>::without_witnesses(circuit);
-
-    // Initialize the proving key
-    let vk = keygen_vk(params, &empty_circuit)?;
-    let pk = keygen_pk(params, vk, &empty_circuit)?;
     Ok(pk)
 }
 

@@ -1,16 +1,20 @@
 use std::sync::Arc;
 
 use halo2_proofs::plonk::*;
-use halo2_proofs::poly::commitment::ParamsProver;
+use halo2_proofs::poly::commitment::{ParamsProver, CommitmentScheme};
 use halo2_proofs::poly::kzg::{
     commitment::{KZGCommitmentScheme, ParamsKZG},
     strategy::SingleStrategy as KZGSingleStrategy,
 };
+use halo2curves::ff::{FromUniformBytes, PrimeField};
 use halo2curves::bn256::{Bn256, Fr, G1Affine};
+
 
 use halo2curves::serde::SerdeObject;
 use snark_verifier::system::halo2::compile;
 use wasm_bindgen::prelude::*;
+use crate::graph::vars::VarVisibility;
+use crate::tensor::TensorType;
 
 use console_error_panic_hook;
 
@@ -24,7 +28,7 @@ pub fn init_panic_hook() {
 
 use crate::execute::{create_proof_circuit_kzg, verify_proof_circuit_kzg};
 use crate::graph::{ModelCircuit, ModelParams};
-use crate::pfsys::{create_keys_wasm, Snarkbytes};
+use crate::pfsys::Snarkbytes;
 
 // get Runargs and visibility from params
 // deserialize run args and visibility, generate model, then generate circuit, then return circuit parameters
@@ -34,21 +38,19 @@ pub fn gen_circuit_params_wasm(
     data_ser: wasm_bindgen::Clamped<Vec<u8>>,
     circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
     run_args_ser: wasm_bindgen::Clamped<Vec<u8>>,
-    visibility_ser: wasm_bindgen::Clamped<Vec<u8>>,
 ) -> Vec<u8> {
     // use JSON serialization here
     let data: crate::pfsys::ModelInput = serde_json::from_slice(&data_ser[..]).unwrap();
-    let run_args: _ = bincode::deserialize(&run_args_ser[..]).unwrap();
-    let visibility: _ = bincode::deserialize(&visibility_ser[..]).unwrap();
+    let run_args: crate::commands::RunArgs = bincode::deserialize(&run_args_ser[..]).unwrap();
+    // get Varvisibility
+    let var_visibility = VarVisibility::from_args(run_args.clone()).expect("Failed to create VarVisibility");
 
     // read in circuit
     let mut reader = std::io::BufReader::new(&circuit_ser[..]);
     let model = crate::graph::Model::new(
         &mut reader,
         run_args,
-        // is this mode supposed to be prove?
-        crate::graph::Mode::Prove,
-        visibility,
+        var_visibility,
     )
     .unwrap();
     let circuit =
@@ -78,7 +80,6 @@ pub fn gen_pk_wasm(
     let model = crate::graph::Model::new(
         &mut reader,
         circuit_params.run_args,
-        crate::graph::Mode::Prove,
         circuit_params.visibility,
     )
     .unwrap();
@@ -217,7 +218,6 @@ pub fn prove_wasm(
     let model = crate::graph::Model::new(
         &mut reader,
         circuit_params.run_args,
-        crate::graph::Mode::Prove,
         circuit_params.visibility,
     )
     .unwrap();
@@ -241,4 +241,25 @@ pub fn prove_wasm(
     .unwrap();
 
     bincode::serialize(&proof.to_bytes()).unwrap()
+}
+
+// HELPER FUNCTIONS
+
+#[cfg(target_arch = "wasm32")]
+/// Creates a [VerifyingKey] and [ProvingKey] for a [ModelCircuit] (`circuit`) with specific [CommitmentScheme] parameters (`params`) for the WASM target
+pub fn create_keys_wasm<Scheme: CommitmentScheme, F: PrimeField + TensorType, C: Circuit<F>>(
+    circuit: &C,
+    params: &'_ Scheme::ParamsProver,
+) -> Result<ProvingKey<Scheme::Curve>, halo2_proofs::plonk::Error>
+where
+    C: Circuit<Scheme::Scalar>,
+    <Scheme as CommitmentScheme>::Scalar: FromUniformBytes<64>,
+{
+    //	Real proof
+    let empty_circuit = <C as Circuit<F>>::without_witnesses(circuit);
+
+    // Initialize the proving key
+    let vk = keygen_vk(params, &empty_circuit)?;
+    let pk = keygen_pk(params, vk, &empty_circuit)?;
+    Ok(pk)
 }

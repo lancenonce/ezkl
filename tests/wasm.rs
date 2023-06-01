@@ -1,12 +1,12 @@
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 #[cfg(test)]
 mod wasm32 {
-    use ezkl_lib::pfsys::Snarkbytes;
-    use ezkl_lib::wasm::{prove_wasm, verify_wasm, gen_circuit_params_wasm, gen_pk_wasm, gen_vk_wasm};
-    use ezkl_lib::graph::vars::VarVisibility;
-    use ezkl_lib::commands::RunArgs;
     use ezkl_lib::circuit::Tolerance;
-
+    use ezkl_lib::commands::RunArgs;
+    use ezkl_lib::pfsys::Snarkbytes;
+    use ezkl_lib::wasm::{
+        gen_circuit_params_wasm, gen_pk_wasm, gen_vk_wasm, prove_wasm, verify_wasm,
+    };
     pub use wasm_bindgen_rayon::init_thread_pool;
     use wasm_bindgen_test::*;
 
@@ -87,21 +87,16 @@ mod wasm32 {
             allocated_constraints: Some(1000), // assuming an arbitrary value here for the sake of the example
         };
 
-        let serialized_run_args = bincode::serialize(&run_args).expect("Failed to serialize RunArgs");
-
-         // get serialized Varvisibility
-        let var_visibility = VarVisibility::from_args(run_args).expect("Failed to create VarVisibility");
-        let serialized_var_visibility = bincode::serialize(&var_visibility).expect("Failed to serialize VarVisibility");
+        let serialized_run_args =
+            bincode::serialize(&run_args).expect("Failed to serialize RunArgs");
 
         let circuit_params = gen_circuit_params_wasm(
             wasm_bindgen::Clamped(INPUT.to_vec()),
             wasm_bindgen::Clamped(NETWORK.to_vec()),
             wasm_bindgen::Clamped(serialized_run_args),
-            wasm_bindgen::Clamped(serialized_var_visibility),
         );
 
         assert!(circuit_params.len() > 0);
-
     }
 
     #[wasm_bindgen_test]
@@ -131,5 +126,41 @@ mod wasm32 {
         );
 
         assert!(vk.len() > 0);
+    }
+
+    #[wasm_bindgen_test]
+    async fn pk_is_valid_test() {
+        let pk = gen_pk_wasm(
+            wasm_bindgen::Clamped(NETWORK.to_vec()),
+            wasm_bindgen::Clamped(KZG_PARAMS.to_vec()),
+            wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),
+            wasm_bindgen::Clamped(INPUT.to_vec()),
+        );
+
+        assert!(pk.len() > 0);
+
+        // prove
+        let proof = prove_wasm(
+            wasm_bindgen::Clamped(INPUT.to_vec()),
+            wasm_bindgen::Clamped(pk.clone()),
+            wasm_bindgen::Clamped(NETWORK.to_vec()),
+            wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),
+            wasm_bindgen::Clamped(KZG_PARAMS.to_vec()),
+        );
+        assert!(proof.len() > 0);
+
+        let vk = gen_vk_wasm(
+            wasm_bindgen::Clamped(pk.clone()),
+            wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),
+        );
+
+        let value = verify_wasm(
+            wasm_bindgen::Clamped(proof.to_vec()),
+            wasm_bindgen::Clamped(vk),
+            wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),
+            wasm_bindgen::Clamped(KZG_PARAMS.to_vec()),
+        );
+        // should not fail
+        assert!(value);
     }
 }
