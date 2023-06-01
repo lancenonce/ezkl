@@ -6,16 +6,19 @@ use crate::eth::{
     get_wallet_signing_provider, send_proof, verify_proof_via_solidity,
 };
 use crate::graph::{quantize_float, scale_to_multiplier, Model, ModelCircuit, ModelParams};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::pfsys::create_keys;
 use crate::pfsys::evm::aggregation::{AggregationCircuit, PoseidonTranscript};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pfsys::evm::evm_verify;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pfsys::evm::{aggregation::gen_aggregation_evm_verifier, single::gen_evm_verifier};
 use crate::pfsys::evm::{DeploymentCode, YulCode};
-use crate::pfsys::{
-    create_keys, load_params, load_pk, load_vk, save_params, save_pk, Snark, TranscriptType,
-};
 use crate::pfsys::{create_proof_circuit, gen_srs, prepare_data, save_vk, verify_proof_circuit};
+use crate::pfsys::{load_params, load_pk, load_vk, save_params, save_pk, Snark, TranscriptType};
+
+#[cfg(target_arch = "wasm32")]
+use crate::pfsys::create_keys_wasm;
 #[cfg(not(target_arch = "wasm32"))]
 use ethers::providers::Middleware;
 #[cfg(not(target_arch = "wasm32"))]
@@ -604,15 +607,33 @@ fn create_keys_kzg(
     // these aren't real values so the sanity checks are mostly meaningless
     let circuit = ModelCircuit::<Fr>::from_arg(&data, CheckMode::UNSAFE)?;
     let params = load_params_cmd(params_path, circuit.model.run_args.logrows)?;
-    let pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, ModelCircuit<Fr>>(&circuit, &params)
-        .map_err(Box::<dyn Error>::from)?;
-    let circuit_params = circuit.params;
-    trace!("params computed");
-    circuit_params.save(&circuit_params_path);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let pk =
+            create_keys_wasm::<KZGCommitmentScheme<Bn256>, Fr, ModelCircuit<Fr>>(&circuit, &params)
+                .map_err(Box::<dyn Error>::from)?;
 
-    save_vk::<KZGCommitmentScheme<Bn256>>(&vk_path, pk.get_vk())?;
-    save_pk::<KZGCommitmentScheme<Bn256>>(&pk_path, &pk)?;
-    Ok(())
+        let circuit_params = circuit.params;
+        trace!("params computed");
+        circuit_params.save(&circuit_params_path);
+
+        save_vk::<KZGCommitmentScheme<Bn256>>(&vk_path, pk.get_vk())?;
+        save_pk::<KZGCommitmentScheme<Bn256>>(&pk_path, &pk)?;
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, ModelCircuit<Fr>>(&circuit, &params)
+            .map_err(Box::<dyn Error>::from)?;
+
+        let circuit_params = circuit.params;
+        trace!("params computed");
+        circuit_params.save(&circuit_params_path);
+
+        save_vk::<KZGCommitmentScheme<Bn256>>(&vk_path, pk.get_vk())?;
+        save_pk::<KZGCommitmentScheme<Bn256>>(&pk_path, &pk)?;
+        Ok(())
+    }
 }
 
 fn prove(
@@ -993,25 +1014,48 @@ fn aggregate(
     // proof aggregation
     {
         let agg_circuit = AggregationCircuit::new(&params, snarks)?;
-        let agg_pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, AggregationCircuit>(
-            &agg_circuit,
-            &params,
-        )?;
+        #[cfg(target_arch = "wasm32")]
+        {
+            let agg_pk = create_keys_wasm::<KZGCommitmentScheme<Bn256>, Fr, AggregationCircuit>(
+                &agg_circuit,
+                &params,
+            )?;
+            let now = Instant::now();
+            let snark = create_proof_circuit_kzg(
+                agg_circuit.clone(),
+                &params,
+                agg_circuit.instances(),
+                &agg_pk,
+                transcript,
+                AccumulatorStrategy::new(&params),
+                check_mode,
+            )?;
 
-        let now = Instant::now();
-        let snark = create_proof_circuit_kzg(
-            agg_circuit.clone(),
-            &params,
-            agg_circuit.instances(),
-            &agg_pk,
-            transcript,
-            AccumulatorStrategy::new(&params),
-            check_mode,
-        )?;
+            info!("Aggregation proof took {}", now.elapsed().as_secs());
+            snark.save(&proof_path)?;
+            save_vk::<KZGCommitmentScheme<Bn256>>(&vk_path, agg_pk.get_vk())?;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let agg_pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, AggregationCircuit>(
+                &agg_circuit,
+                &params,
+            )?;
+            let now = Instant::now();
+            let snark = create_proof_circuit_kzg(
+                agg_circuit.clone(),
+                &params,
+                agg_circuit.instances(),
+                &agg_pk,
+                transcript,
+                AccumulatorStrategy::new(&params),
+                check_mode,
+            )?;
 
-        info!("Aggregation proof took {}", now.elapsed().as_secs());
-        snark.save(&proof_path)?;
-        save_vk::<KZGCommitmentScheme<Bn256>>(&vk_path, agg_pk.get_vk())?;
+            info!("Aggregation proof took {}", now.elapsed().as_secs());
+            snark.save(&proof_path)?;
+            save_vk::<KZGCommitmentScheme<Bn256>>(&vk_path, agg_pk.get_vk())?;
+        }
     }
     Ok(())
 }

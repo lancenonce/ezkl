@@ -24,7 +24,7 @@ pub fn init_panic_hook() {
 
 use crate::execute::{create_proof_circuit_kzg, verify_proof_circuit_kzg};
 use crate::graph::{ModelCircuit, ModelParams};
-use crate::pfsys::{create_keys, Snarkbytes};
+use crate::pfsys::{create_keys_wasm, Snarkbytes};
 
 // get Runargs and visibility from params
 // deserialize run args and visibility, generate model, then generate circuit, then return circuit parameters
@@ -36,8 +36,8 @@ pub fn gen_circuit_params_wasm(
     run_args_ser: wasm_bindgen::Clamped<Vec<u8>>,
     visibility_ser: wasm_bindgen::Clamped<Vec<u8>>,
 ) -> Vec<u8> {
-
-    let data = bincode::deserialize(&data_ser[..]).unwrap();
+    // use JSON serialization here
+    let data: crate::pfsys::ModelInput = serde_json::from_slice(&data_ser[..]).unwrap();
     let run_args: _ = bincode::deserialize(&run_args_ser[..]).unwrap();
     let visibility: _ = bincode::deserialize(&visibility_ser[..]).unwrap();
 
@@ -65,7 +65,8 @@ pub fn gen_pk_wasm(
     circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
     data_ser: wasm_bindgen::Clamped<Vec<u8>>,
 ) -> Vec<u8> {
-    let data = bincode::deserialize(&data_ser[..]).unwrap();
+    // use JSON serialization here
+    let data: crate::pfsys::ModelInput = serde_json::from_slice(&data_ser[..]).unwrap();
     // read in circuit params
     let circuit_params: ModelParams = bincode::deserialize(&circuit_params_ser[..]).unwrap();
     // read in kzg params
@@ -85,7 +86,7 @@ pub fn gen_pk_wasm(
     let circuit =
         ModelCircuit::<Fr>::new(&data, Arc::new(model), crate::circuit::CheckMode::UNSAFE).unwrap();
 
-    let pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, ModelCircuit<Fr>>(&circuit, &params)
+    let pk = create_keys_wasm::<KZGCommitmentScheme<Bn256>, Fr, ModelCircuit<Fr>>(&circuit, &params)
         .map_err(Box::<dyn std::error::Error>::from)
         .unwrap();
 
