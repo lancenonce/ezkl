@@ -30,8 +30,6 @@ use crate::execute::{create_proof_circuit_kzg, verify_proof_circuit_kzg};
 use crate::graph::{ModelCircuit, ModelParams};
 use crate::pfsys::Snarkbytes;
 
-// get Runargs and visibility from params
-// deserialize run args and visibility, generate model, then generate circuit, then return circuit parameters
 /// Generate circuit params in browser
 #[wasm_bindgen]
 pub fn gen_circuit_params_wasm(
@@ -39,7 +37,6 @@ pub fn gen_circuit_params_wasm(
     circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
     run_args_ser: wasm_bindgen::Clamped<Vec<u8>>,
 ) -> Vec<u8> {
-    // use JSON serialization here
     let data: crate::pfsys::ModelInput = serde_json::from_slice(&data_ser[..]).unwrap();
     let run_args: crate::commands::RunArgs = bincode::deserialize(&run_args_ser[..]).unwrap();
     // get Varvisibility
@@ -67,7 +64,6 @@ pub fn gen_pk_wasm(
     circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
     data_ser: wasm_bindgen::Clamped<Vec<u8>>,
 ) -> Vec<u8> {
-    // use JSON serialization here
     let data: crate::pfsys::ModelInput = serde_json::from_slice(&data_ser[..]).unwrap();
     // read in circuit params
     let circuit_params: ModelParams = bincode::deserialize(&circuit_params_ser[..]).unwrap();
@@ -76,9 +72,9 @@ pub fn gen_pk_wasm(
     let params: ParamsKZG<Bn256> =
         halo2_proofs::poly::commitment::Params::<'_, G1Affine>::read(&mut reader).unwrap();
     // read in circuit
-    let mut reader = std::io::BufReader::new(&circuit_ser[..]);
+    let mut circuit_reader = std::io::BufReader::new(&circuit_ser[..]);
     let model = crate::graph::Model::new(
-        &mut reader,
+        &mut circuit_reader,
         circuit_params.run_args,
         circuit_params.visibility,
     )
@@ -125,8 +121,8 @@ pub fn gen_vk_wasm(
     serialized_vk
 }
 
-#[wasm_bindgen]
 /// Verify proof in browser using wasm
+#[wasm_bindgen]
 pub fn verify_wasm(
     proof_js: wasm_bindgen::Clamped<Vec<u8>>,
     vk: wasm_bindgen::Clamped<Vec<u8>>,
@@ -245,8 +241,8 @@ pub fn prove_wasm(
 
 // HELPER FUNCTIONS
 
-#[cfg(target_arch = "wasm32")]
 /// Creates a [VerifyingKey] and [ProvingKey] for a [ModelCircuit] (`circuit`) with specific [CommitmentScheme] parameters (`params`) for the WASM target
+#[cfg(target_arch = "wasm32")]
 pub fn create_keys_wasm<Scheme: CommitmentScheme, F: PrimeField + TensorType, C: Circuit<F>>(
     circuit: &C,
     params: &'_ Scheme::ParamsProver,
