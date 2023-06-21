@@ -12,6 +12,7 @@ use halo2curves::ff::{FromUniformBytes, PrimeField};
 use crate::tensor::TensorType;
 use halo2curves::serde::SerdeObject;
 use snark_verifier::system::halo2::compile;
+use wasm_bindgen::prelude::JsValue;
 use wasm_bindgen::prelude::*;
 
 use console_error_panic_hook;
@@ -25,24 +26,32 @@ pub fn init_panic_hook() {
 }
 
 use crate::execute::{create_proof_circuit_kzg, verify_proof_circuit_kzg};
-use crate::graph::{GraphCircuit, GraphParams};
+use crate::graph::{GraphCircuit, GraphSettings};
 use crate::pfsys::Snarkbytes;
 
-/// Generate circuit params in browser
+/// Generate circuit settings in browser
 #[wasm_bindgen]
-pub fn gen_circuit_params_wasm(
+pub fn gen_circuit_settings_wasm(
     model_ser: wasm_bindgen::Clamped<Vec<u8>>,
     run_args_ser: wasm_bindgen::Clamped<Vec<u8>>,
-) -> Vec<u8> {
-    let run_args: crate::commands::RunArgs = bincode::deserialize(&run_args_ser[..]).unwrap();
+) -> Result<Vec<u8>, JsValue> {
+    let run_args: crate::commands::RunArgs =
+        serde_json::from_slice(&run_args_ser[..]).map_err(|e| {
+            JsValue::from_str(&format!("Error deserializing run args: {}", e.to_string()))
+        })?;
 
     // Read in circuit
     let mut reader = std::io::BufReader::new(&model_ser[..]);
-    let model = crate::graph::Model::new(&mut reader, run_args).unwrap();
-    let circuit =
-        GraphCircuit::new(Arc::new(model), run_args, crate::circuit::CheckMode::UNSAFE).unwrap();
-    let circuit_params = circuit.params;
-    bincode::serialize(&circuit_params).unwrap()
+    let model = crate::graph::Model::new(&mut reader, run_args).map_err(|e| {
+        JsValue::from_str(&format!(
+            "Error reading model from bytes: {}",
+            e.to_string()
+        ))
+    })?;
+    let circuit = GraphCircuit::new(Arc::new(model), run_args, crate::circuit::CheckMode::UNSAFE)
+        .map_err(|e| JsValue::from_str(&format!("Error creating circuit: {}", e)))?;
+    let circuit_settings = circuit.settings;
+    serde_json::to_vec(&circuit_settings).map_err(|e| JsValue::from_str(&format!("{}", e)))
 }
 
 /// Generate proving key in browser
@@ -50,24 +59,41 @@ pub fn gen_circuit_params_wasm(
 pub fn gen_pk_wasm(
     circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
     params_ser: wasm_bindgen::Clamped<Vec<u8>>,
-    circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
-) -> Vec<u8> {
-    // Read in circuit params
-    let circuit_params: GraphParams = serde_json::from_slice(&circuit_params_ser[..]).unwrap();
+    circuit_settings_ser: wasm_bindgen::Clamped<Vec<u8>>,
+) -> Result<Vec<u8>, JsValue> {
+    // Read in circuit settings
+    let circuit_settings: GraphSettings = serde_json::from_slice(&circuit_settings_ser[..])
+        .map_err(|e| {
+            JsValue::from_str(&format!(
+                "Error deserializing circuit settings: {}",
+                e.to_string()
+            ))
+        })?;
     // Read in kzg params
     let mut reader = std::io::BufReader::new(&params_ser[..]);
     let params: ParamsKZG<Bn256> =
-        halo2_proofs::poly::commitment::Params::<'_, G1Affine>::read(&mut reader).unwrap();
+        halo2_proofs::poly::commitment::Params::<'_, G1Affine>::read(&mut reader).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Error reading params from bytes: {}",
+                e.to_string()
+            ))
+        })?;
     // Read in circuit
     let mut circuit_reader = std::io::BufReader::new(&circuit_ser[..]);
-    let model = crate::graph::Model::new(&mut circuit_reader, circuit_params.run_args).unwrap();
+    let model =
+        crate::graph::Model::new(&mut circuit_reader, circuit_settings.run_args).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Error reading model from bytes: {}",
+                e.to_string()
+            ))
+        })?;
 
     let circuit = GraphCircuit::new(
         Arc::new(model),
-        circuit_params.run_args,
+        circuit_settings.run_args,
         crate::circuit::CheckMode::UNSAFE,
     )
-    .unwrap();
+    .map_err(|e| JsValue::from_str(&format!("Error creating circuit: {}", e)))?;
 
     // Create proving key
     let pk = create_keys_wasm::<KZGCommitmentScheme<Bn256>, Fr, GraphCircuit>(&circuit, &params)
@@ -76,36 +102,42 @@ pub fn gen_pk_wasm(
 
     let mut serialized_pk = Vec::new();
     pk.write(&mut serialized_pk, halo2_proofs::SerdeFormat::RawBytes)
-        .unwrap();
+        .map_err(|e| JsValue::from_str(&format!("Error writing pk to bytes: {}", e)))?;
 
-    serialized_pk
+    Ok(serialized_pk)
 }
 
 /// Generate verifying key in browser
 #[wasm_bindgen]
 pub fn gen_vk_wasm(
     pk: wasm_bindgen::Clamped<Vec<u8>>,
-    circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
-) -> Vec<u8> {
-    // Read in circuit params
-    let circuit_params: GraphParams = serde_json::from_slice(&circuit_params_ser[..]).unwrap();
+    circuit_settings_ser: wasm_bindgen::Clamped<Vec<u8>>,
+) -> Result<Vec<u8>, JsValue> {
+    // Read in circuit settings
+    let circuit_settings = serde_json::from_slice::<GraphSettings>(&circuit_settings_ser[..])
+        .map_err(|e| {
+            JsValue::from_str(&format!(
+                "Error deserializing circuit settings: {}",
+                e.to_string()
+            ))
+        });
 
     // Read in proving key
     let mut reader = std::io::BufReader::new(&pk[..]);
     let pk = ProvingKey::<G1Affine>::read::<_, GraphCircuit>(
         &mut reader,
         halo2_proofs::SerdeFormat::RawBytes,
-        circuit_params.clone(),
+        circuit_settings.unwrap().clone(),
     )
-    .unwrap();
+    .map_err(|e| JsValue::from_str(&format!("Error reading pk from bytes: {}", e)))?;
 
     let vk = pk.get_vk();
 
     let mut serialized_vk = Vec::new();
     vk.write(&mut serialized_vk, halo2_proofs::SerdeFormat::RawBytes)
-        .unwrap();
+        .map_err(|e| JsValue::from_str(&format!("Error writing vk to bytes: {}", e)))?;
 
-    serialized_vk
+    Ok(serialized_vk)
 }
 
 /// Verify proof in browser using wasm
@@ -113,16 +145,32 @@ pub fn gen_vk_wasm(
 pub fn verify_wasm(
     proof_js: wasm_bindgen::Clamped<Vec<u8>>,
     vk: wasm_bindgen::Clamped<Vec<u8>>,
-    circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
+    circuit_settings_ser: wasm_bindgen::Clamped<Vec<u8>>,
     params_ser: wasm_bindgen::Clamped<Vec<u8>>,
-) -> bool {
+) -> Result<bool, JsValue> {
     let mut reader = std::io::BufReader::new(&params_ser[..]);
     let params: ParamsKZG<Bn256> =
-        halo2_proofs::poly::commitment::Params::<'_, G1Affine>::read(&mut reader).unwrap();
+        halo2_proofs::poly::commitment::Params::<'_, G1Affine>::read(&mut reader).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Error reading params from bytes: {}",
+                e.to_string()
+            ))
+        })?;
 
-    let circuit_params: GraphParams = serde_json::from_slice(&circuit_params_ser[..]).unwrap();
+    let circuit_settings: GraphSettings = serde_json::from_slice(&circuit_settings_ser[..])
+        .map_err(|e| {
+            JsValue::from_str(&format!(
+                "Error deserializing circuit settings: {}",
+                e.to_string()
+            ))
+        })?;
 
-    let snark_bytes: Snarkbytes = bincode::deserialize(&proof_js[..]).unwrap();
+    let snark_bytes: Snarkbytes = bincode::deserialize(&proof_js[..]).map_err(|e| {
+        JsValue::from_str(&format!(
+            "Error deserializing proof bytes: {}",
+            e.to_string()
+        ))
+    })?;
 
     let instances = snark_bytes
         .instances
@@ -138,9 +186,9 @@ pub fn verify_wasm(
     let vk = VerifyingKey::<G1Affine>::read::<_, GraphCircuit>(
         &mut reader,
         halo2_proofs::SerdeFormat::RawBytes,
-        circuit_params,
+        circuit_settings,
     )
-    .unwrap();
+    .map_err(|e| JsValue::from_str(&format!("Error reading vk from bytes: {}", e)))?;
 
     let protocol = compile(
         &params,
@@ -161,9 +209,9 @@ pub fn verify_wasm(
     let result = verify_proof_circuit_kzg(params.verifier_params(), snark, &vk, strategy);
 
     if result.is_ok() {
-        true
+        Ok(true)
     } else {
-        false
+        Ok(false)
     }
 }
 
@@ -173,56 +221,82 @@ pub fn prove_wasm(
     data: wasm_bindgen::Clamped<Vec<u8>>,
     pk: wasm_bindgen::Clamped<Vec<u8>>,
     circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
-    circuit_params_ser: wasm_bindgen::Clamped<Vec<u8>>,
+    circuit_settings_ser: wasm_bindgen::Clamped<Vec<u8>>,
     params_ser: wasm_bindgen::Clamped<Vec<u8>>,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, JsValue> {
     // read in kzg params
     let mut reader = std::io::BufReader::new(&params_ser[..]);
     let params: ParamsKZG<Bn256> =
-        halo2_proofs::poly::commitment::Params::<'_, G1Affine>::read(&mut reader).unwrap();
+        halo2_proofs::poly::commitment::Params::<'_, G1Affine>::read(&mut reader).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Error reading params from bytes: {}",
+                e.to_string()
+            ))
+        })?;
 
     // read in model input
-    let data: crate::graph::GraphInput = serde_json::from_slice(&data[..]).unwrap();
+    let data_deser = serde_json::from_slice(&data[..]).map_err(|e| {
+        JsValue::from_str(&format!(
+            "Error deserializing model input: {}",
+            e.to_string()
+        ))
+    });
 
-    // read in circuit params
-    let circuit_params: GraphParams = serde_json::from_slice(&circuit_params_ser[..]).unwrap();
+    // read in circuit settings
+    let circuit_settings: GraphSettings = serde_json::from_slice(&circuit_settings_ser[..])
+        .map_err(|e| {
+            JsValue::from_str(&format!(
+                "Error deserializing circuit settings: {}",
+                e.to_string()
+            ))
+        })?;
 
     // read in proving key
     let mut reader = std::io::BufReader::new(&pk[..]);
     let pk = ProvingKey::<G1Affine>::read::<_, GraphCircuit>(
         &mut reader,
         halo2_proofs::SerdeFormat::RawBytes,
-        circuit_params.clone(),
+        circuit_settings.clone(),
     )
-    .unwrap();
+    .map_err(|e| JsValue::from_str(&format!("Error reading pk from bytes: {}", e)))?;
 
     // read in circuit
     let mut reader = std::io::BufReader::new(&circuit_ser[..]);
-    let model = crate::graph::Model::new(&mut reader, circuit_params.run_args).unwrap();
+    let model = crate::graph::Model::new(&mut reader, circuit_settings.run_args).map_err(|e| {
+        JsValue::from_str(&format!(
+            "Error reading model from bytes: {}",
+            e.to_string()
+        ))
+    })?;
 
     let mut circuit = GraphCircuit::new(
         Arc::new(model),
-        circuit_params.run_args,
+        circuit_settings.run_args,
         crate::circuit::CheckMode::UNSAFE,
     )
-    .unwrap();
+    .map_err(|e| JsValue::from_str(&format!("Error creating circuit: {}", e)))?;
 
     // prep public inputs
-    let public_inputs = circuit.prepare_public_inputs(&data).unwrap();
+    let public_inputs = circuit
+        .prepare_public_inputs(&data_deser.unwrap())
+        .map_err(|e| {
+            JsValue::from_str(&format!("Error preparing public inputs: {}", e.to_string()))
+        })?;
 
-    let strategy = KZGSingleStrategy::new(&params);
     let proof = create_proof_circuit_kzg(
         circuit,
         &params,
         public_inputs,
         &pk,
         crate::pfsys::TranscriptType::EVM,
-        strategy,
+        KZGSingleStrategy::new(&params),
         crate::circuit::CheckMode::UNSAFE,
     )
-    .unwrap();
+    .map_err(|e| JsValue::from_str(&format!("Error creating proof: {}", e)))?;
 
-    bincode::serialize(&proof.to_bytes()).unwrap()
+    bincode::serialize(&proof.to_bytes()).map_err(|e| {
+        JsValue::from_str(&format!("Error serializing proof bytes: {}", e.to_string()))
+    })
 }
 
 // HELPER FUNCTIONS
@@ -237,7 +311,7 @@ where
     C: Circuit<Scheme::Scalar>,
     <Scheme as CommitmentScheme>::Scalar: FromUniformBytes<64>,
 {
-    //	Real proof
+    // Real proof
     let empty_circuit = <C as Circuit<F>>::without_witnesses(circuit);
 
     // Initialize the proving key
