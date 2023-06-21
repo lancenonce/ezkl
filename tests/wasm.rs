@@ -4,6 +4,7 @@ mod wasm32 {
     use ezkl_lib::circuit::Tolerance;
     use ezkl_lib::commands::RunArgs;
     use ezkl_lib::graph::GraphSettings;
+    use ezkl_lib::graph::GraphSettings;
     use ezkl_lib::pfsys::Snarkbytes;
     use ezkl_lib::wasm::{
         gen_circuit_settings_wasm, gen_pk_wasm, gen_vk_wasm, prove_wasm, verify_wasm,
@@ -17,10 +18,10 @@ mod wasm32 {
     wasm_bindgen_test_configure!(run_in_browser);
 
     pub const KZG_PARAMS: &[u8] = include_bytes!("../tests/wasm/kzg");
-    pub const CIRCUIT_PARAMS: &[u8] = include_bytes!("../tests/wasm/circuit");
+    pub const CIRCUIT_PARAMS: &[u8] = include_bytes!("../tests/wasm/settings.json");
     pub const VK: &[u8] = include_bytes!("../tests/wasm/test.key");
     pub const PK: &[u8] = include_bytes!("../tests/wasm/test.provekey");
-    pub const INPUT: &[u8] = include_bytes!("../tests/wasm/test.input.json");
+    pub const WITNESS: &[u8] = include_bytes!("../tests/wasm/test.witness.json");
     pub const PROOF: &[u8] = include_bytes!("../tests/wasm/test.proof");
     pub const NETWORK: &[u8] = include_bytes!("../tests/wasm/test.onnx");
 
@@ -59,7 +60,7 @@ mod wasm32 {
     async fn prove_pass() {
         // prove
         let proof = prove_wasm(
-            wasm_bindgen::Clamped(INPUT.to_vec()),
+            wasm_bindgen::Clamped(WITNESS.to_vec()),
             wasm_bindgen::Clamped(PK.to_vec()),
             wasm_bindgen::Clamped(NETWORK.to_vec()),
             wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),
@@ -181,7 +182,7 @@ mod wasm32 {
 
         // prove
         let proof = prove_wasm(
-            wasm_bindgen::Clamped(INPUT.to_vec()),
+            wasm_bindgen::Clamped(WITNESS.to_vec()),
             wasm_bindgen::Clamped(pk.clone()),
             wasm_bindgen::Clamped(NETWORK.to_vec()),
             wasm_bindgen::Clamped(CIRCUIT_PARAMS.to_vec()),

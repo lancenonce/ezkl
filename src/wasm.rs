@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use halo2_proofs::plonk::*;
 use halo2_proofs::poly::commitment::{CommitmentScheme, ParamsProver};
 use halo2_proofs::poly::kzg::{
@@ -26,6 +24,7 @@ pub fn init_panic_hook() {
 }
 
 use crate::execute::{create_proof_circuit_kzg, verify_proof_circuit_kzg};
+use crate::graph::{GraphCircuit, GraphSettings};
 use crate::graph::{GraphCircuit, GraphSettings};
 use crate::pfsys::Snarkbytes;
 
@@ -218,7 +217,7 @@ pub fn verify_wasm(
 /// Prove in browser using wasm
 #[wasm_bindgen]
 pub fn prove_wasm(
-    data: wasm_bindgen::Clamped<Vec<u8>>,
+    witness: wasm_bindgen::Clamped<Vec<u8>>,
     pk: wasm_bindgen::Clamped<Vec<u8>>,
     circuit_ser: wasm_bindgen::Clamped<Vec<u8>>,
     circuit_settings_ser: wasm_bindgen::Clamped<Vec<u8>>,

@@ -11,10 +11,9 @@ use halo2curves::ff::{Field, PrimeField};
 use halo2curves::pasta::pallas;
 use halo2curves::pasta::Fp as F;
 use ops::lookup::LookupOp;
+use ops::region::RegionCtx;
 use rand::rngs::OsRng;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
-
 #[derive(Default)]
 struct TestParams;
 
@@ -45,7 +44,7 @@ mod matmul {
             let a = VarTensor::new_advice(cs, K, LEN * LEN);
             let b = VarTensor::new_advice(cs, K, LEN * LEN);
             let output = VarTensor::new_advice(cs, K, LEN * LEN);
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -56,12 +55,12 @@ mod matmul {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Einsum {
                                     equation: "ij,jk->ik".to_string(),
                                 }),
@@ -121,7 +120,7 @@ mod matmul_col_overflow {
             let a = VarTensor::new_advice(cs, K, LEN * LEN * LEN);
             let b = VarTensor::new_advice(cs, K, LEN * LEN * LEN);
             let output = VarTensor::new_advice(cs, K, LEN * LEN * LEN);
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -132,12 +131,12 @@ mod matmul_col_overflow {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Einsum {
                                     equation: "ij,jk->ik".to_string(),
                                 }),
@@ -198,7 +197,7 @@ mod dot {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -209,12 +208,12 @@ mod dot {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Einsum {
                                     equation: "i,i->".to_string(),
                                 }),
@@ -271,7 +270,7 @@ mod dot_col_overflow {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -282,12 +281,12 @@ mod dot_col_overflow {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Einsum {
                                     equation: "i,i->".to_string(),
                                 }),
@@ -344,7 +343,7 @@ mod sum {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -355,12 +354,12 @@ mod sum {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Sum { axes: vec![0] }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -413,7 +412,7 @@ mod sum_col_overflow {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -424,12 +423,12 @@ mod sum_col_overflow {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Sum { axes: vec![0] }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -457,6 +456,7 @@ mod sum_col_overflow {
 
 #[cfg(test)]
 mod composition {
+
     use super::*;
 
     const K: usize = 9;
@@ -482,7 +482,7 @@ mod composition {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -494,13 +494,12 @@ mod composition {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
-                        let mut offset = 0;
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         let _ = config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut offset,
                                 Box::new(PolyOp::Einsum {
                                     equation: "i,i->".to_string(),
                                 }),
@@ -508,9 +507,8 @@ mod composition {
                             .unwrap();
                         let _ = config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut offset,
                                 Box::new(PolyOp::Einsum {
                                     equation: "i,i->".to_string(),
                                 }),
@@ -518,9 +516,8 @@ mod composition {
                             .unwrap();
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut offset,
                                 Box::new(PolyOp::Einsum {
                                     equation: "i,i->".to_string(),
                                 }),
@@ -577,7 +574,7 @@ mod conv {
             let a = VarTensor::new_advice(cs, K, (LEN + 1) * LEN);
             let b = VarTensor::new_advice(cs, K, (LEN + 1) * LEN);
             let output = VarTensor::new_advice(cs, K, (LEN + 1) * LEN);
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -588,12 +585,12 @@ mod conv {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &[self.inputs[0].clone()],
-                                &mut 0,
                                 Box::new(PolyOp::Conv {
                                     kernel: self.inputs[1].clone(),
                                     bias: None,
@@ -704,7 +701,7 @@ mod sumpool {
             let a = VarTensor::new_advice(cs, K, (LEN + 1) * LEN);
             let b = VarTensor::new_advice(cs, K, (LEN + 1) * LEN);
             let output = VarTensor::new_advice(cs, K, (LEN + 1) * LEN);
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -715,12 +712,12 @@ mod sumpool {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::SumPool {
                                     padding: (0, 0),
                                     stride: (1, 1),
@@ -784,7 +781,7 @@ mod add_w_shape_casting {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -795,12 +792,12 @@ mod add_w_shape_casting {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Add { a: None }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -855,7 +852,7 @@ mod add {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -866,12 +863,12 @@ mod add {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Add { a: None }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -926,7 +923,7 @@ mod add_with_overflow {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -937,12 +934,12 @@ mod add_with_overflow {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Add { a: None }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -979,7 +976,7 @@ mod add_with_overflow_and_poseidon {
             spec::{PoseidonSpec, POSEIDON_RATE, POSEIDON_WIDTH},
             PoseidonChip, PoseidonConfig,
         },
-        ModulePlanner,
+        Module, ModulePlanner,
     };
 
     use super::*;
@@ -1014,7 +1011,7 @@ mod add_with_overflow_and_poseidon {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            let base = BaseConfig::configure(cs, &[a, b], &output, CheckMode::SAFE, 0);
+            let base = BaseConfig::configure(cs, &[a, b], &output, CheckMode::SAFE);
 
             let poseidon = PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::configure(cs);
 
@@ -1027,10 +1024,12 @@ mod add_with_overflow_and_poseidon {
             mut layouter: impl Layouter<Fr>,
         ) -> Result<(), Error> {
             let poseidon_chip: PoseidonChip<PoseidonSpec, WIDTH, RATE, WIDTH> =
-                PoseidonChip::construct(config.poseidon.clone());
+                PoseidonChip::new(config.poseidon.clone());
 
-            let assigned_inputs_a = poseidon_chip.hash(&mut layouter, &self.inputs[0], 0)?;
-            let assigned_inputs_b = poseidon_chip.hash(&mut layouter, &self.inputs[1], 1)?;
+            let assigned_inputs_a =
+                poseidon_chip.layout(&mut layouter, &self.inputs[0..1], vec![0])?;
+            let assigned_inputs_b =
+                poseidon_chip.layout(&mut layouter, &self.inputs[1..2], vec![1])?;
 
             layouter.assign_region(|| "_new_module", |_| Ok(()))?;
 
@@ -1038,16 +1037,11 @@ mod add_with_overflow_and_poseidon {
 
             layouter.assign_region(
                 || "model",
-                |mut region| {
-                    let mut offset = 0;
+                |region| {
+                    let mut region = RegionCtx::new(region, 0);
                     config
                         .base
-                        .layout(
-                            Arc::new(Mutex::new(Some(&mut region))),
-                            &inputs,
-                            &mut offset,
-                            Box::new(PolyOp::Add { a: None }),
-                        )
+                        .layout(&mut region, &inputs, Box::new(PolyOp::Add { a: None }))
                         .map_err(|_| Error::Synthesis)
                 },
             )?;
@@ -1065,10 +1059,10 @@ mod add_with_overflow_and_poseidon {
             .map(|i| halo2curves::bn256::Fr::from(i as u64 + 1))
             .collect::<Vec<_>>();
         let commitment_a =
-            crate::circuit::modules::poseidon::witness_hash::<WIDTH>(a.clone()).unwrap();
+            PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::run(a.clone()).unwrap()[0][0];
 
         let commitment_b =
-            crate::circuit::modules::poseidon::witness_hash::<WIDTH>(b.clone()).unwrap();
+            PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::run(b.clone()).unwrap()[0][0];
 
         // parameters
         let a = Tensor::from(a.into_iter().map(Value::known));
@@ -1090,12 +1084,12 @@ mod add_with_overflow_and_poseidon {
         let b = (0..LEN)
             .map(|i| halo2curves::bn256::Fr::from(i as u64 + 1))
             .collect::<Vec<_>>();
-        let commitment_a = crate::circuit::modules::poseidon::witness_hash::<WIDTH>(a.clone())
-            .unwrap()
+        let commitment_a = PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::run(a.clone())
+            .unwrap()[0][0]
             + Fr::one();
 
-        let commitment_b = crate::circuit::modules::poseidon::witness_hash::<WIDTH>(b.clone())
-            .unwrap()
+        let commitment_b = PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::run(b.clone())
+            .unwrap()[0][0]
             + Fr::one();
 
         // parameters
@@ -1138,7 +1132,7 @@ mod sub {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -1149,14 +1143,10 @@ mod sub {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
-                            .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
-                                &self.inputs.clone(),
-                                &mut 0,
-                                Box::new(PolyOp::Sub),
-                            )
+                            .layout(&mut region, &self.inputs.clone(), Box::new(PolyOp::Sub))
                             .map_err(|_| Error::Synthesis)
                     },
                 )
@@ -1209,7 +1199,7 @@ mod mult {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -1220,12 +1210,12 @@ mod mult {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Mult { a: None }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -1280,7 +1270,7 @@ mod pow {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -1291,14 +1281,10 @@ mod pow {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
-                            .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
-                                &self.inputs.clone(),
-                                &mut 0,
-                                Box::new(PolyOp::Pow(5)),
-                            )
+                            .layout(&mut region, &self.inputs.clone(), Box::new(PolyOp::Pow(5)))
                             .map_err(|_| Error::Synthesis)
                     },
                 )
@@ -1349,7 +1335,7 @@ mod pack {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0)
+            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
         fn synthesize(
@@ -1360,12 +1346,12 @@ mod pack {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(PolyOp::Pack(2, 1)),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -1418,8 +1404,7 @@ mod rescaled {
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
 
-            let mut config =
-                Self::Config::configure(cs, &[a, b.clone()], &output, CheckMode::SAFE, 0);
+            let mut config = Self::Config::configure(cs, &[a, b.clone()], &output, CheckMode::SAFE);
 
             config
                 .configure_lookup(
@@ -1446,12 +1431,12 @@ mod rescaled {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &self.inputs.clone(),
-                                &mut 0,
                                 Box::new(Rescaled {
                                     inner: Box::new(PolyOp::Sum { axes: vec![0] }),
                                     scale: vec![(0, 5)],
@@ -1516,7 +1501,7 @@ mod matmul_relu {
             let output = VarTensor::new_advice(cs, K, LEN);
 
             let mut base_config =
-                BaseConfig::configure(cs, &[a, b.clone()], &output, CheckMode::SAFE, 0);
+                BaseConfig::configure(cs, &[a, b.clone()], &output, CheckMode::SAFE);
             // sets up a new relu table
             base_config
                 .configure_lookup(cs, &b, &output, 16, &LookupOp::ReLU { scale: 1 })
@@ -1533,26 +1518,20 @@ mod matmul_relu {
             config.base_config.layout_tables(&mut layouter).unwrap();
             layouter.assign_region(
                 || "",
-                |mut region| {
+                |region| {
+                    let mut region = RegionCtx::new(region, 0);
                     let op = PolyOp::Einsum {
                         equation: "ij,jk->ik".to_string(),
                     };
-                    let mut offset = 0;
                     let output = config
                         .base_config
-                        .layout(
-                            Arc::new(Mutex::new(Some(&mut region))),
-                            &self.inputs,
-                            &mut offset,
-                            Box::new(op),
-                        )
+                        .layout(&mut region, &self.inputs, Box::new(op))
                         .unwrap();
                     let _output = config
                         .base_config
                         .layout(
-                            Arc::new(Mutex::new(Some(&mut region))),
+                            &mut region,
                             &[output.unwrap()],
-                            &mut offset,
                             Box::new(LookupOp::ReLU { scale: 1 }),
                         )
                         .unwrap();
@@ -1581,108 +1560,6 @@ mod matmul_relu {
 
         let prover = MockProver::run(K as u32, &circuit, vec![]).unwrap();
         prover.assert_satisfied();
-    }
-}
-
-#[cfg(test)]
-mod rangecheck {
-
-    use crate::circuit::Tolerance;
-    use crate::tensor::Tensor;
-    use halo2_proofs::{
-        circuit::{Layouter, SimpleFloorPlanner, Value},
-        dev::MockProver,
-        plonk::{Circuit, ConstraintSystem, Error},
-    };
-    use halo2curves::pasta::Fp;
-
-    const RANGE: usize = 8; // 3-bit value
-    const K: usize = 8;
-    const LEN: usize = 4;
-
-    use super::*;
-
-    #[derive(Clone)]
-    struct MyCircuit<F: PrimeField + TensorType + PartialOrd> {
-        input: ValTensor<F>,
-        output: ValTensor<F>,
-    }
-
-    impl<F: PrimeField + TensorType + PartialOrd> Circuit<F> for MyCircuit<F> {
-        type Config = BaseConfig<F>;
-        type FloorPlanner = SimpleFloorPlanner;
-        type Params = TestParams;
-
-        fn without_witnesses(&self) -> Self {
-            self.clone()
-        }
-
-        fn configure(cs: &mut ConstraintSystem<F>) -> Self::Config {
-            let a = VarTensor::new_advice(cs, K, LEN);
-            let b = VarTensor::new_advice(cs, K, LEN);
-            let output = VarTensor::new_advice(cs, K, LEN);
-
-            Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, RANGE as i32)
-        }
-
-        fn synthesize(
-            &self,
-            mut config: Self::Config,
-            mut layouter: impl Layouter<F>,
-        ) -> Result<(), Error> {
-            layouter
-                .assign_region(
-                    || "",
-                    |mut region| {
-                        config
-                            .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
-                                &[self.input.clone(), self.output.clone()],
-                                &mut 0,
-                                Box::new(HybridOp::RangeCheck(Tolerance::Abs { val: RANGE })),
-                            )
-                            .map_err(|_| Error::Synthesis)
-                    },
-                )
-                .unwrap();
-            Ok(())
-        }
-    }
-
-    #[test]
-    #[allow(clippy::assertions_on_constants)]
-    fn test_range_check() {
-        let k = 4;
-
-        // Successful cases
-        for i in 0..RANGE {
-            let inp = Tensor::new(Some(&[Value::<Fp>::known(Fp::from(i as u64))]), &[1]).unwrap();
-            let out =
-                Tensor::new(Some(&[Value::<Fp>::known(Fp::from(i as u64 + 1))]), &[1]).unwrap();
-            let circuit = MyCircuit::<Fp> {
-                input: ValTensor::from(inp),
-                output: ValTensor::from(out),
-            };
-            let prover = MockProver::run(k, &circuit, vec![]).unwrap();
-            prover.assert_satisfied();
-        }
-        {
-            let inp = Tensor::new(Some(&[Value::<Fp>::known(Fp::from(22_u64))]), &[1]).unwrap();
-            let out = Tensor::new(Some(&[Value::<Fp>::known(Fp::from(0_u64))]), &[1]).unwrap();
-            let circuit = MyCircuit::<Fp> {
-                input: ValTensor::from(inp),
-                output: ValTensor::from(out),
-            };
-            let prover = MockProver::run(k, &circuit, vec![]).unwrap();
-            match prover.verify() {
-                Ok(_) => {
-                    assert!(false)
-                }
-                Err(_) => {
-                    assert!(true)
-                }
-            }
-        }
     }
 }
 
@@ -1725,8 +1602,7 @@ mod rangecheckpercent {
             let a = VarTensor::new_advice(cs, K, LEN);
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
-            let mut config =
-                Self::Config::configure(cs, &[a, b.clone()], &output, CheckMode::SAFE, 0);
+            let mut config = Self::Config::configure(cs, &[a, b.clone()], &output, CheckMode::SAFE);
             // set up a new GreaterThan and Recip tables
             let nl = &LookupOp::GreaterThan {
                 a: circuit::utils::F32((RANGE * scale as f32) / 100.0),
@@ -1747,15 +1623,15 @@ mod rangecheckpercent {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &[self.output.clone(), self.input.clone()],
-                                &mut 0,
-                                Box::new(HybridOp::RangeCheck(Tolerance::Percentage {
+                                Box::new(HybridOp::RangeCheck(Tolerance {
                                     val: RANGE,
-                                    scale: SCALE,
+                                    scales: (SCALE, SCALE),
                                 })),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -1863,12 +1739,12 @@ mod relu {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &[self.input.clone()],
-                                &mut 0,
                                 Box::new(LookupOp::ReLU { scale: 1 }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -1927,7 +1803,7 @@ mod softmax {
             let a = VarTensor::new_advice(cs, K, LEN);
             let b = VarTensor::new_advice(cs, K, LEN);
             let output = VarTensor::new_advice(cs, K, LEN);
-            let mut config = Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE, 0);
+            let mut config = Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE);
             let advices = (0..2)
                 .map(|_| VarTensor::new_advice(cs, K, LEN))
                 .collect::<Vec<_>>();
@@ -1966,13 +1842,12 @@ mod softmax {
             layouter
                 .assign_region(
                     || "",
-                    |mut region| {
-                        let mut offset = 0;
+                    |region| {
+                        let mut region = RegionCtx::new(region, 0);
                         let _output = config
                             .layout(
-                                Arc::new(Mutex::new(Some(&mut region))),
+                                &mut region,
                                 &[self.input.clone()],
-                                &mut offset,
                                 Box::new(HybridOp::Softmax {
                                     scales: (SCALE, SCALE),
                                 }),

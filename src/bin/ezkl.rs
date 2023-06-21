@@ -1,15 +1,16 @@
+use clap::Parser;
 use colored::*;
 use colored_json::prelude::*;
 use env_logger::Builder;
 use ezkl_lib::commands::Cli;
 use ezkl_lib::execute::run;
+use instant::Instant;
 use log::{error, info, Level, LevelFilter, Record};
 use rand::seq::SliceRandom;
 use std::env;
 use std::error::Error;
 use std::fmt::Formatter;
 use std::io::Write;
-use std::time::Instant;
 
 #[allow(dead_code)]
 pub fn level_color(level: &log::Level, msg: &str) -> String {
@@ -91,7 +92,7 @@ pub fn init_logger() {
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> Result<(), Box<dyn Error>> {
-    let args = Cli::create().unwrap();
+    let args = Cli::parse();
     init_logger();
     banner();
     info!("command: \n {}", &args.as_json()?.to_colored_json_auto()?);

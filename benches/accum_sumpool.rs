@@ -15,7 +15,6 @@ use halo2_proofs::{
 };
 use halo2curves::bn256::{Bn256, Fr};
 use rand::rngs::OsRng;
-use std::sync::{Arc, Mutex};
 
 static mut IMAGE_HEIGHT: usize = 2;
 static mut IMAGE_WIDTH: usize = 2;
@@ -46,7 +45,7 @@ impl Circuit<Fr> for MyCircuit {
 
         let output = VarTensor::new_advice(cs, K, (len + 1) * len);
 
-        Self::Config::configure(cs, &[a, b], &output, CheckMode::UNSAFE, 0)
+        Self::Config::configure(cs, &[a, b], &output, CheckMode::UNSAFE)
     }
 
     fn synthesize(
@@ -56,12 +55,12 @@ impl Circuit<Fr> for MyCircuit {
     ) -> Result<(), Error> {
         layouter.assign_region(
             || "",
-            |mut region| {
+            |region| {
+                let mut region = region::RegionCtx::new(region, 0);
                 config
                     .layout(
-                        Arc::new(Mutex::new(Some(&mut region))),
+                        &mut region,
                         &[self.image.clone()],
-                        &mut 0,
                         Box::new(PolyOp::SumPool {
                             padding: (0, 0),
                             stride: (1, 1),

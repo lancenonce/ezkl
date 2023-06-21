@@ -1,22 +1,21 @@
+use super::extract_const_quantized_values;
 use super::node::*;
 use super::scale_to_multiplier;
 use super::vars::*;
 use super::GraphError;
-use super::GraphParams;
+use super::GraphSettings;
 use crate::circuit::hybrid::HybridOp;
-
+use crate::circuit::region::RegionCtx;
 use crate::circuit::Input;
-use crate::circuit::Tolerance;
 use crate::circuit::Unknown;
 use crate::{
-    circuit::{lookup::LookupOp, ops::poly::PolyOp, BaseConfig as PolyConfig, CheckMode, Op},
+    circuit::{lookup::LookupOp, BaseConfig as PolyConfig, CheckMode, Op},
     commands::RunArgs,
     tensor::{Tensor, ValTensor},
 };
 use halo2curves::bn256::Fr as Fp;
 
 use colored::Colorize;
-use halo2_proofs::circuit::Region;
 use tract_onnx::prelude::{
     DatumExt, Graph, InferenceFact, InferenceModelExt, SymbolValues, TypedFact, TypedOp,
 };
@@ -33,8 +32,6 @@ use log::{debug, info, trace};
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::error::Error;
-use std::sync::Arc;
-use std::sync::Mutex;
 use tabled::Table;
 use tract_onnx;
 use tract_onnx::prelude::Framework;
@@ -224,7 +221,7 @@ impl Model {
         &self,
         run_args: RunArgs,
         check_mode: CheckMode,
-    ) -> Result<GraphParams, Box<dyn Error>> {
+    ) -> Result<GraphSettings, Box<dyn Error>> {
         let instance_shapes = self.instance_shapes();
         // this is the total number of variables we will need to allocate
         // for the circuit
@@ -239,22 +236,26 @@ impl Model {
         // Then number of columns in the circuits
         info!(
             "{} {} {}",
-            "The model generates".blue(),
+            "model generates".blue(),
             num_constraints.to_string().blue(),
-            "constraints (does not include modules)".blue()
+            "constraints (excluding modules)".blue()
         );
 
         // extract the requisite lookup ops from the model
         let mut lookup_ops: Vec<LookupOp> = self.required_lookups();
 
         // if we're using percentage tolerance, we need to add the necessary range check ops for it.
-        if let Tolerance::Percentage { val, .. } = run_args.tolerance {
-            let tolerance = Tolerance::Percentage {
-                val,
-                scale: scale_to_multiplier(run_args.scale) as usize,
-            };
-            let opkind: Box<dyn Op<Fp>> = Box::new(HybridOp::RangeCheck(tolerance));
-            lookup_ops.extend(opkind.required_lookups());
+
+        if run_args.tolerance.val > 0.0 {
+            for scale in self.graph.get_output_scales() {
+                let mut tolerance = run_args.tolerance;
+                tolerance.scales = (
+                    scale_to_multiplier(scale) as usize,
+                    scale_to_multiplier(run_args.scale) as usize,
+                );
+                let opkind: Box<dyn Op<Fp>> = Box::new(HybridOp::RangeCheck(tolerance));
+                lookup_ops.extend(opkind.required_lookups());
+            }
         }
 
         let set: HashSet<_> = lookup_ops.drain(..).collect(); // dedup
@@ -263,10 +264,10 @@ impl Model {
         let batch_size = self.graph.input_shapes()[0][0];
         assert!(self.graph.input_shapes().iter().all(|x| x[0] == batch_size));
 
-        Ok(GraphParams {
+        Ok(GraphSettings {
             run_args,
             model_instance_shapes: instance_shapes,
-            num_hashes: 0,
+            module_sizes: crate::graph::modules::ModuleSizes::default(),
             num_constraints,
             required_lookups: lookup_ops,
             check_mode,
@@ -361,6 +362,8 @@ impl Model {
         run_args: &RunArgs,
         visibility: &VarVisibility,
     ) -> Result<ParsedNodes, Box<dyn Error>> {
+        let start_time = instant::Instant::now();
+
         let mut model = tract_onnx::onnx().model_for_read(reader).map_err(|e| {
             error!("Error loading model: {}", e);
             GraphError::ModelLoad
@@ -421,6 +424,9 @@ impl Model {
             inputs: model.inputs.iter().map(|o| o.node).collect(),
             outputs: model.outputs.iter().map(|o| o.node).collect(),
         };
+
+        let duration = start_time.elapsed();
+        trace!("model loading took: {:?}", duration);
 
         Ok(parsed_nodes)
     }
@@ -532,7 +538,7 @@ impl Model {
 
     /// Creates a `Model` from parsed run_args
     /// # Arguments
-    /// * `params` - A [GraphParams] struct holding parsed CLI arguments.
+    /// * `params` - A [GraphSettings] struct holding parsed CLI arguments.
     pub fn from_run_args(
         run_args: &RunArgs,
         model: &std::path::PathBuf,
@@ -550,22 +556,16 @@ impl Model {
         meta: &mut ConstraintSystem<Fp>,
         vars: &mut ModelVars<Fp>,
         num_bits: usize,
-        tolerance: Tolerance,
         required_lookups: Vec<LookupOp>,
         check_mode: CheckMode,
     ) -> Result<PolyConfig<Fp>, Box<dyn Error>> {
         info!("configuring model");
-        // Extract the abs tolerance value for the baseop range check. Will be zero if percentage tolerance is used.
-        let tol_abs = match tolerance {
-            Tolerance::Abs { val } => val,
-            _ => 0,
-        };
+
         let mut base_gate = PolyConfig::configure(
             meta,
             vars.advices[0..2].try_into()?,
             &vars.advices[2],
             check_mode,
-            tol_abs as i32,
         );
         // set scale for HybridOp::RangeCheck and call self.conf_lookup on that op for percentage tolerance case
         let input = &vars.advices[0];
@@ -592,6 +592,9 @@ impl Model {
         vars: &ModelVars<Fp>,
     ) -> Result<Vec<ValTensor<Fp>>, Box<dyn Error>> {
         info!("model layout...");
+
+        let start_time = instant::Instant::now();
+
         let mut results = BTreeMap::<usize, ValTensor<Fp>>::new();
 
         for (i, input_idx) in self.graph.inputs.iter().enumerate() {
@@ -606,86 +609,55 @@ impl Model {
 
         let outputs = layouter.assign_region(
             || "model",
-            |mut region| {
-                let mut offset: usize = 0;
+            |region| {
+                let mut thread_safe_region = RegionCtx::new(region, 0);
 
-                let thread_safe_region = Arc::new(Mutex::new(Some(&mut region)));
-
-                let mut outputs = self
-                    .layout_nodes(
-                        &mut config,
-                        thread_safe_region.clone(),
-                        &mut results,
-                        &mut offset,
-                    )
+                let outputs = self
+                    .layout_nodes(&mut config, &mut thread_safe_region, &mut results)
                     .map_err(|e| {
                         error!("{}", e);
                         halo2_proofs::plonk::Error::Synthesis
                     })?;
 
-                // pack outputs if need be
-                if run_args.pack_base > 1 {
-                    for i in 0..outputs.len() {
-                        debug!("packing outputs...");
-                        outputs[i] = config
-                            .base
-                            .layout(
-                                thread_safe_region.clone(),
-                                &outputs[i..i + 1],
-                                &mut offset,
-                                Box::new(PolyOp::Pack(run_args.pack_base, run_args.scale)),
-                            )
-                            .map_err(|e| {
-                                error!("{}", e);
-                                halo2_proofs::plonk::Error::Synthesis
-                            })?
-                            .unwrap();
-                        // only use with mock prover
-                        trace!("------------ packed output {:?}", outputs[i].show());
-                    }
-                }
+                if run_args.output_visibility == Visibility::Public {
+                    let output_scales = self.graph.get_output_scales();
+                    let global_scale = scale_to_multiplier(run_args.scale) as usize;
+                    let _ = outputs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, output)| {
+                            let mut tolerance = run_args.tolerance.clone();
+                            tolerance.scales =
+                                (scale_to_multiplier(output_scales[i]) as usize, global_scale);
 
-                match run_args.output_visibility {
-                    Visibility::Public => {
-                        let tolerance = match run_args.tolerance {
-                            Tolerance::Percentage { val, .. } => Tolerance::Percentage {
-                                val,
-                                scale: scale_to_multiplier(run_args.scale) as usize,
-                            },
-                            _ => run_args.tolerance,
-                        };
-                        let _ = outputs
-                            .iter()
-                            .enumerate()
-                            .map(|(i, output)| {
-                                let mut instance_offset = 0;
-                                if self.visibility.input.is_public() {
-                                    instance_offset += inputs.len();
-                                };
-                                config.base.layout(
-                                    thread_safe_region.clone(),
-                                    &[output.clone(), vars.instances[instance_offset + i].clone()],
-                                    &mut offset,
-                                    Box::new(HybridOp::RangeCheck(tolerance)),
-                                )
-                            })
-                            .collect_vec();
-                    }
-                    _ => {}
+                            let mut instance_offset = 0;
+                            if self.visibility.input.is_public() {
+                                instance_offset += inputs.len();
+                            };
+                            config.base.layout(
+                                &mut thread_safe_region,
+                                &[output.clone(), vars.instances[instance_offset + i].clone()],
+                                Box::new(HybridOp::RangeCheck(tolerance)),
+                            )
+                        })
+                        .collect_vec();
                 }
                 info!("computing...");
                 Ok(outputs)
             },
         )?;
+
+        let duration = start_time.elapsed();
+        trace!("model layout took: {:?}", duration);
+
         Ok(outputs)
     }
 
     fn layout_nodes(
         &self,
         config: &mut ModelConfig,
-        region: Arc<Mutex<Option<&mut Region<Fp>>>>,
+        region: &mut RegionCtx<Fp>,
         results: &mut BTreeMap<usize, ValTensor<Fp>>,
-        offset: &mut usize,
     ) -> Result<Vec<ValTensor<Fp>>, Box<dyn Error>> {
         for (idx, node) in self.graph.nodes.iter() {
             let values: Vec<ValTensor<Fp>> = node
@@ -694,13 +666,18 @@ impl Model {
                 .map(|i| results.get(i).unwrap().clone())
                 .collect_vec();
 
-            debug!("laying out {}: {}, offset:{}", idx, node.as_str(), offset);
+            debug!(
+                "laying out {}: {}, offset:{}",
+                idx,
+                node.as_str(),
+                region.offset()
+            );
             trace!("dims: {:?}", node.out_dims());
             match node {
                 NodeType::Node(n) => {
                     let res = config
                         .base
-                        .layout(region.clone(), &values, offset, n.opkind.clone_dyn())
+                        .layout(region, &values, n.opkind.clone_dyn())
                         .map_err(|e| {
                             error!("{}", e);
                             halo2_proofs::plonk::Error::Synthesis
@@ -718,7 +695,7 @@ impl Model {
                     }
                 }
                 NodeType::SubGraph { model, .. } => {
-                    let res = model.layout_nodes(config, region.clone(), results, offset)?;
+                    let res = model.layout_nodes(config, region, results)?;
                     let mut res = res.last().unwrap().clone();
                     res.flatten();
                     results.insert(*idx, res);
@@ -746,6 +723,9 @@ impl Model {
         input_shapes: &[Vec<usize>],
     ) -> Result<usize, Box<dyn Error>> {
         info!("calculating num of constraints using dummy model layout...");
+
+        let start_time = instant::Instant::now();
+
         let mut results = BTreeMap::<usize, ValTensor<Fp>>::new();
 
         let inputs: Vec<ValTensor<Fp>> = input_shapes
@@ -761,122 +741,97 @@ impl Model {
         }
 
         let mut dummy_config = PolyConfig::dummy(run_args.logrows as usize);
+        let mut model_config = ModelConfig {
+            base: dummy_config.clone(),
+            vars: ModelVars::new_dummy(),
+        };
 
-        let mut offset: usize = 0;
+        let mut region = RegionCtx::new_dummy(0);
 
-        let mut outputs = self.dummy_layout_nodes(
-            &mut dummy_config,
-            &self.graph.nodes,
-            &mut results,
-            &mut offset,
-        )?;
+        let outputs = self.layout_nodes(&mut model_config, &mut region, &mut results)?;
 
-        // pack outputs if need be
-        if run_args.pack_base > 1 {
-            for i in 0..outputs.len() {
-                debug!("packing outputs...");
-                outputs[i] = dummy_config
-                    .layout(
-                        Arc::new(Mutex::new(None)),
-                        &outputs[i..i + 1],
-                        &mut offset,
-                        Box::new(PolyOp::Pack(run_args.pack_base, run_args.scale)),
-                    )
-                    .map_err(|e| {
-                        error!("{}", e);
-                        halo2_proofs::plonk::Error::Synthesis
-                    })?
-                    .unwrap();
-            }
+        if run_args.output_visibility == Visibility::Public {
+            let _ = outputs
+                .into_iter()
+                .map(|output| {
+                    dummy_config
+                        .layout(
+                            &mut region,
+                            &[output.clone(), output],
+                            Box::new(HybridOp::RangeCheck(run_args.tolerance)),
+                        )
+                        .unwrap()
+                })
+                .collect_vec();
         }
 
-        match run_args.output_visibility {
-            Visibility::Public => {
-                let tolerance = match run_args.tolerance {
-                    Tolerance::Percentage { val, .. } => Tolerance::Percentage {
-                        val,
-                        scale: scale_to_multiplier(run_args.scale) as usize,
-                    },
-                    _ => run_args.tolerance,
-                };
-                let _ = outputs
-                    .clone()
-                    .into_iter()
-                    .map(|output| {
-                        dummy_config
-                            .layout(
-                                Arc::new(Mutex::new(None)),
-                                &[output.clone(), output],
-                                &mut offset,
-                                Box::new(HybridOp::RangeCheck(tolerance)),
-                            )
-                            .unwrap()
-                    })
-                    .collect_vec();
-            }
-            _ => {}
-        }
+        let duration = start_time.elapsed();
+        trace!("dummy model layout took: {:?}", duration);
 
-        Ok(offset)
+        Ok(region.offset())
     }
 
-    fn dummy_layout_nodes(
-        &self,
-        dummy_config: &mut PolyConfig<Fp>,
-        _nodes: &NodeGraph,
-        results: &mut BTreeMap<usize, ValTensor<Fp>>,
-        offset: &mut usize,
-    ) -> Result<Vec<ValTensor<Fp>>, Box<dyn Error>> {
-        for (idx, node) in self.graph.nodes.iter() {
-            debug!(
-                "dummy layout {}: {}, offset: {}",
-                idx,
-                node.as_str(),
-                offset
-            );
-
+    /// Retrieves all constants from the model.
+    pub fn get_all_consts(&self) -> Vec<ValTensor<Fp>> {
+        let mut consts = vec![];
+        for node in self.graph.nodes.values() {
             match node {
                 NodeType::Node(n) => {
-                    let values: Vec<ValTensor<Fp>> = node
-                        .inputs()
-                        .iter()
-                        .map(|i| results.get(i).unwrap().clone())
-                        .collect_vec();
-                    let res = dummy_config
-                        .layout(
-                            Arc::new(Mutex::new(None)),
-                            &values,
-                            offset,
-                            n.opkind.clone_dyn(),
-                        )
-                        .map_err(|e| {
-                            error!("{}", e);
-                            halo2_proofs::plonk::Error::Synthesis
-                        })?;
-
-                    if let Some(vt) = res {
-                        results.insert(*idx, vt);
-                    }
+                    let boxed_op = n.opkind.clone_dyn();
+                    if let Some(constant) = extract_const_quantized_values(boxed_op) {
+                        consts.push(constant);
+                    };
                 }
                 NodeType::SubGraph { model, .. } => {
-                    let res = model.dummy_layout_nodes(dummy_config, _nodes, results, offset)?;
-                    let mut res = res.last().unwrap().clone();
-                    res.flatten();
-                    results.insert(*idx, res);
+                    consts.extend(model.get_all_consts());
                 }
             }
         }
+        consts
+    }
 
-        let output_nodes = self.graph.outputs.iter();
-        debug!(
-            "model outputs are nodes: {:?}",
-            output_nodes.clone().collect_vec()
-        );
-        let outputs = output_nodes
-            .map(|o| results.get(o).unwrap().clone())
-            .collect_vec();
+    /// Shapes of the computational graph's constants
+    pub fn const_shapes(&self) -> Vec<Vec<usize>> {
+        let mut const_shapes = vec![];
+        for node in self.graph.nodes.values() {
+            match node {
+                NodeType::Node(n) => {
+                    let boxed_op = n.opkind.clone_dyn();
+                    if let Some(constant) = extract_const_quantized_values(boxed_op) {
+                        const_shapes.push(constant.dims().to_vec());
+                    };
+                }
+                NodeType::SubGraph { model, .. } => {
+                    const_shapes.extend(model.const_shapes());
+                }
+            }
+        }
+        const_shapes
+    }
 
-        Ok(outputs)
+    /// Replaces all constants in the model with the provided values (in order of indexing)
+    pub fn replace_consts(&mut self, consts: Vec<ValTensor<Fp>>) {
+        let mut const_idx = 0;
+        for node in self.graph.nodes.values_mut() {
+            match node {
+                NodeType::Node(n) => {
+                    let boxed_op = n.opkind.clone_dyn();
+                    if let Some(constant) = boxed_op
+                        .as_any()
+                        .downcast_ref::<crate::circuit::ops::Constant<Fp>>()
+                    {
+                        n.opkind = Box::new(crate::circuit::Constant::new(
+                            consts[const_idx].clone(),
+                            constant.raw_values.clone(),
+                        ));
+                        const_idx += 1;
+                    };
+                }
+                NodeType::SubGraph { model, .. } => {
+                    model.replace_consts(consts.clone());
+                }
+            }
+        }
     }
 
     /// Shapes of the computational graph's public inputs (if any)

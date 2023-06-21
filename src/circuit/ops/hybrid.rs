@@ -1,17 +1,13 @@
-use std::{
-    any::Any,
-    sync::{Arc, Mutex},
-};
+use std::any::Any;
 
 use crate::{
     circuit::{self, layouts, Tolerance},
     graph::scale_to_multiplier,
     tensor::{self, Tensor, TensorError, TensorType, ValTensor},
 };
-use halo2_proofs::circuit::Region;
 use serde::{Deserialize, Serialize};
 
-use super::{lookup::LookupOp, ForwardResult, Op};
+use super::{lookup::LookupOp, region::RegionCtx, ForwardResult, Op};
 use halo2curves::ff::PrimeField;
 // import run args from model
 
@@ -81,9 +77,8 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
     fn layout(
         &self,
         config: &mut crate::circuit::BaseConfig<F>,
-        region: Arc<Mutex<Option<&mut Region<F>>>>,
+        region: &mut RegionCtx<F>,
         values: &[ValTensor<F>],
-        offset: &mut usize,
     ) -> Result<Option<ValTensor<F>>, Box<dyn std::error::Error>> {
         Ok(Some(match self {
             HybridOp::MaxPool2d {
@@ -97,13 +92,12 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
                 *padding,
                 *stride,
                 *pool_dims,
-                offset,
             )?,
             HybridOp::Max { axes } => {
-                layouts::max_axes(config, region, values[..].try_into()?, axes, offset)?
+                layouts::max_axes(config, region, values[..].try_into()?, axes)?
             }
             HybridOp::Min { axes } => {
-                layouts::min_axes(config, region, values[..].try_into()?, axes, offset)?
+                layouts::min_axes(config, region, values[..].try_into()?, axes)?
             }
             HybridOp::Softmax { scales } => layouts::multi_dim_softmax(
                 config,
@@ -111,25 +105,15 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
                 values[..].try_into()?,
                 scales.0,
                 scales.1,
-                offset,
             )?,
-            HybridOp::RangeCheck(tol) => match tol {
-                Tolerance::Abs { val } => layouts::range_check(
-                    config,
-                    region,
-                    values[..].try_into()?,
-                    offset,
-                    *val as i32,
-                )?,
-                Tolerance::Percentage { val, scale } => layouts::range_check_percent(
-                    config,
-                    region,
-                    values[..].try_into()?,
-                    *scale,
-                    offset,
-                    *val,
-                )?,
-            },
+            HybridOp::RangeCheck(tol) => layouts::range_check_percent(
+                config,
+                region,
+                values[..].try_into()?,
+                tol.scales.0,
+                tol.scales.1,
+                tol.val,
+            )?,
         }))
     }
 
@@ -165,18 +149,19 @@ impl<F: PrimeField + TensorType + PartialOrd> Op<F> for HybridOp {
                     },
                 ]
             }
-            HybridOp::RangeCheck(tol) => match tol {
-                Tolerance::Percentage { val, scale } => {
-                    let scale = scale.pow(2);
-                    vec![
+            HybridOp::RangeCheck(tol) => {
+                let mut lookups = vec![];
+                if tol.val > 0.0 {
+                    let scale = tol.scales.0 * tol.scales.1;
+                    lookups.extend([
                         LookupOp::Recip { scale },
                         LookupOp::GreaterThan {
-                            a: circuit::utils::F32((val * scale as f32) / 100.0),
+                            a: circuit::utils::F32((tol.val * scale as f32) / 100.0),
                         },
-                    ]
+                    ]);
                 }
-                _ => vec![],
-            },
+                lookups
+            }
         }
     }
 

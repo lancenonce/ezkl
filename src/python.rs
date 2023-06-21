@@ -1,6 +1,6 @@
 use crate::circuit::{CheckMode, Tolerance};
-use crate::commands::{CalibrationArgs, CalibrationTarget, RunArgs, StrategyType};
-use crate::graph::{Model, Visibility};
+use crate::commands::{CalibrationTarget, RunArgs, StrategyType};
+use crate::graph::{Model, Visibility, GraphWitness};
 use crate::pfsys::{
     gen_srs as ezkl_gen_srs, save_params,
      Snark, TranscriptType,
@@ -29,11 +29,11 @@ struct PyRunArgs {
     #[pyo3(get, set)]
     pub input_visibility: Visibility,
     #[pyo3(get, set)]
+    pub on_chain_inputs: bool,
+    #[pyo3(get, set)]
     pub output_visibility: Visibility,
     #[pyo3(get, set)]
     pub param_visibility: Visibility,
-    #[pyo3(get, set)]
-    pub pack_base: u32,
     #[pyo3(get, set)]
     pub batch_size: usize,
     #[pyo3(get, set)]
@@ -46,14 +46,14 @@ impl PyRunArgs {
     #[new]
     fn new() -> Self {
         PyRunArgs {
-            tolerance: Tolerance::Abs { val: 0 },
+            tolerance: Tolerance::default(),
             scale: 7,
             bits: 16,
             logrows: 17,
+            on_chain_inputs: false,
             input_visibility: "public".into(),
             output_visibility: "public".into(),
             param_visibility: "private".into(),
-            pack_base: 1,
             batch_size: 1,
             allocated_constraints: None,
         }
@@ -68,47 +68,16 @@ impl From<PyRunArgs> for RunArgs {
             scale: py_run_args.scale,
             bits: py_run_args.bits,
             logrows: py_run_args.logrows,
+            on_chain_inputs: py_run_args.on_chain_inputs,
             input_visibility: py_run_args.input_visibility,
             output_visibility: py_run_args.output_visibility,
             param_visibility: py_run_args.param_visibility,
-            pack_base: py_run_args.pack_base,
             allocated_constraints: py_run_args.allocated_constraints,
             batch_size: py_run_args.batch_size,
         }
     }
 }
 
-/// pyclass containing the struct used for calibration_args
-#[pyclass]
-#[derive(Clone)]
-struct PyCalArgs {
-    #[pyo3(get, set)]
-    pub data: Option<PathBuf>,
-    #[pyo3(get, set)]
-    pub target: Option<CalibrationTarget>,
-}
-
-/// default instantiation of PyCalArgs
-#[pymethods]
-impl PyCalArgs {
-    #[new]
-    fn new() -> Self {
-        PyCalArgs {
-            data: None::<PathBuf>,
-            target: None::<CalibrationTarget>,
-        }
-    }
-}
-
-/// Conversion between PyRunArgs and RunArgs
-impl From<PyCalArgs> for CalibrationArgs {
-    fn from(py_cal_args: PyCalArgs) -> Self {
-        CalibrationArgs {
-            data: py_cal_args.data,
-            target: py_cal_args.target,
-        }
-    }
-}
 
 /// Displays the table as a string in python
 #[pyfunction(signature = (
@@ -128,33 +97,54 @@ fn table(model: String, py_run_args: Option<PyRunArgs>) -> PyResult<String> {
 
 /// generates the srs
 #[pyfunction(signature = (
-    params_path,
+    srs_path,
     logrows,
 ))]
-fn gen_srs(params_path: PathBuf, logrows: usize) -> PyResult<()> {
+fn gen_srs(srs_path: PathBuf, logrows: usize) -> PyResult<()> {
     let params = ezkl_gen_srs::<KZGCommitmentScheme<Bn256>>(logrows as u32);
-    save_params::<KZGCommitmentScheme<Bn256>>(&params_path, &params)?;
+    save_params::<KZGCommitmentScheme<Bn256>>(&srs_path, &params)?;
     Ok(())
 }
 
-/// runs the forward pass operation
+/// generates the circuit settings
 #[pyfunction(signature = (
     model,
     output,
     py_run_args = None,
-    py_cal_args = None
 ))]
-fn gen_circuit_params(
+fn gen_settings(
     model: PathBuf,
     output: PathBuf,
     py_run_args: Option<PyRunArgs>,
-    py_cal_args: Option<PyCalArgs>,
 ) -> Result<bool, PyErr> {
     let run_args: RunArgs = py_run_args.unwrap_or_else(PyRunArgs::new).into();
-    let calibration_args: CalibrationArgs = py_cal_args.unwrap_or_else(PyCalArgs::new).into();
 
-    crate::execute::gen_circuit_params(model, output, run_args, calibration_args).map_err(|e| {
-        let err_str = format!("Failed to generate circuit params: {}", e);
+    crate::execute::gen_circuit_settings(model, output, run_args).map_err(|e| {
+        let err_str = format!("Failed to generate settings: {}", e);
+        PyRuntimeError::new_err(err_str)})?;
+
+    Ok(true)
+}
+
+
+/// calibrates the circuit settings
+#[pyfunction(signature = (
+    data, 
+    model,
+    settings,
+    target,
+))]
+fn calibrate_settings(
+    data:  PathBuf,
+    model: PathBuf,
+    settings: PathBuf,
+    target: Option<CalibrationTarget>,
+) -> Result<bool, PyErr> {
+
+    let target = target.unwrap_or(CalibrationTarget::Resources);
+
+    crate::execute::calibrate(model, data, settings, target).map_err(|e| {
+        let err_str = format!("Failed to calibrate settings: {}", e);
         PyRuntimeError::new_err(err_str)})?;
 
     Ok(true)
@@ -165,37 +155,36 @@ fn gen_circuit_params(
     data,
     model,
     output,
-    scale = 7, 
-    batch_size = 1,  
-    circuit_params_path = None, 
+    settings_path, 
+    scale=None, 
+    batch_size=None,  
 ))]
-fn forward(
+fn gen_witness(
     data: PathBuf,
     model: PathBuf,
-    output: PathBuf,
+    output: Option<PathBuf>,
+    settings_path: PathBuf,
     scale: Option<u32>,
     batch_size: Option<usize>,
-    circuit_params_path: Option<PathBuf>,
-) -> PyResult<()> {
-    crate::execute::forward(model, data, output, scale, batch_size, circuit_params_path)
+) -> PyResult<PyObject> {
+    let output: GraphWitness = crate::execute::gen_witness(model, data, output, scale, batch_size, settings_path)
         .map_err(|e| {
-            let err_str = format!("Failed to run forward: {}", e);
+            let err_str = format!("Failed to run generate witness: {}", e);
             PyRuntimeError::new_err(err_str)})?;
-    Ok(())
+    Python::with_gil(|py| {
+        Ok(output.to_object(py))
+    })
 }
 
 /// mocks the prover
 #[pyfunction(signature = (
-    data,
+    witness,
     model,
-    circuit_params_path,
-    py_run_args = None
+    settings_path,
 ))]
-fn mock(data: PathBuf, model: PathBuf, circuit_params_path: Option<PathBuf>, py_run_args: Option<PyRunArgs>) -> PyResult<bool> {
-    let run_args = py_run_args.unwrap_or_else(PyRunArgs::new).into();
-
-    crate::execute::mock(model, data, run_args, circuit_params_path).map_err(|e| {
-        let err_str = format!("Failed to run setup: {}", e);
+fn mock(witness: PathBuf, model: PathBuf, settings_path: PathBuf) -> PyResult<bool> {
+    crate::execute::mock(model, witness, settings_path).map_err(|e| {
+        let err_str = format!("Failed to run mock: {}", e);
         PyRuntimeError::new_err(err_str)})?;
 
     Ok(true)
@@ -206,18 +195,18 @@ fn mock(data: PathBuf, model: PathBuf, circuit_params_path: Option<PathBuf>, py_
     model,
     vk_path,
     pk_path,
-    params_path,
-    circuit_params_path,
+    srs_path,
+    settings_path,
 ))]
 fn setup(
     model: PathBuf,
     vk_path: PathBuf,
     pk_path: PathBuf,
-    params_path: PathBuf,
-    circuit_params_path: PathBuf,
+    srs_path: PathBuf,
+    settings_path: PathBuf,
 ) -> Result<bool, PyErr> {
 
-    crate::execute::setup(model, params_path, circuit_params_path, vk_path, pk_path).map_err(|e| {
+    crate::execute::setup(model, srs_path, settings_path, vk_path, pk_path).map_err(|e| {
             let err_str = format!("Failed to run setup: {}", e);
             PyRuntimeError::new_err(err_str)})?;
 
@@ -226,27 +215,32 @@ fn setup(
 
 /// runs the prover on a set of inputs
 #[pyfunction(signature = (
-    data,
+    witness,
     model,
     pk_path,
     proof_path,
-    params_path,
+    srs_path,
     transcript,
     strategy,
-    circuit_params_path,
+    settings_path,
+    test_reads
 ))]
 fn prove(
-    data: PathBuf,
+    witness:  PathBuf,
     model: PathBuf,
     pk_path: PathBuf,
     proof_path: PathBuf,
-    params_path: PathBuf,
+    srs_path: PathBuf,
     transcript: TranscriptType,
     strategy: StrategyType,
-    circuit_params_path: PathBuf,
+    settings_path: PathBuf,
+    test_reads: bool
 ) -> Result<bool, PyErr> {
-    
-    crate::execute::prove(data, model, pk_path, proof_path, params_path, transcript, strategy, circuit_params_path, CheckMode::UNSAFE).map_err(|e| {
+    Runtime::new()
+            .unwrap()
+            .block_on(crate::execute::prove(
+                witness, model, pk_path, proof_path, srs_path, transcript, strategy, settings_path, CheckMode::UNSAFE, test_reads
+            )).map_err(|e| {
         let err_str = format!("Failed to run prove: {}", e);
         PyRuntimeError::new_err(err_str)})?;
 
@@ -256,18 +250,18 @@ fn prove(
 /// verifies a given proof
 #[pyfunction(signature = (
     proof_path,
-    circuit_params_path,
+    settings_path,
     vk_path,
-    params_path,
+    srs_path,
 ))]
 fn verify(
     proof_path: PathBuf,
-    circuit_params_path: PathBuf,
+    settings_path: PathBuf,
     vk_path: PathBuf,
-    params_path: PathBuf,
+    srs_path: PathBuf,
 ) -> Result<bool, PyErr> {
 
-    crate::execute::verify(proof_path, circuit_params_path, vk_path, params_path).map_err(|e| {
+    crate::execute::verify(proof_path, settings_path, vk_path, srs_path).map_err(|e| {
         let err_str = format!("Failed to run verify: {}", e);
         PyRuntimeError::new_err(err_str)})?;
 
@@ -279,10 +273,10 @@ fn verify(
 #[pyfunction(signature = (
     proof_path,
     aggregation_snarks,
-    circuit_params_paths,
+    settings_paths,
     aggregation_vk_paths,
     vk_path,
-    params_path,
+    srs_path,
     transcript,
     logrows,
     check_mode,
@@ -290,10 +284,10 @@ fn verify(
 fn aggregate(
     proof_path: PathBuf,
     aggregation_snarks: Vec<PathBuf>,
-    circuit_params_paths: Vec<PathBuf>,
+    settings_paths: Vec<PathBuf>,
     aggregation_vk_paths: Vec<PathBuf>,
     vk_path: PathBuf,
-    params_path: PathBuf,
+    srs_path: PathBuf,
     transcript: TranscriptType,
     logrows: u32,
     check_mode: CheckMode,
@@ -301,10 +295,10 @@ fn aggregate(
     // the K used for the aggregation circuit
     crate::execute::aggregate(proof_path,
         aggregation_snarks,
-        circuit_params_paths,
+        settings_paths,
         aggregation_vk_paths,
         vk_path,
-        params_path,
+        srs_path,
         transcript,
         logrows,
         check_mode).map_err(|e| {
@@ -318,17 +312,17 @@ fn aggregate(
 #[pyfunction(signature = (
     proof_path,
     vk_path,
-    params_path,
+    srs_path,
     logrows
 ))]
 fn verify_aggr(
     proof_path: PathBuf,
     vk_path: PathBuf,
-    params_path: PathBuf,
+    srs_path: PathBuf,
     logrows: u32,
 ) -> Result<bool, PyErr> {
 
-    crate::execute::verify_aggr(proof_path, vk_path, params_path, logrows).map_err(|e| {
+    crate::execute::verify_aggr(proof_path, vk_path, srs_path, logrows).map_err(|e| {
         let err_str = format!("Failed to run verify_aggr: {}", e);
         PyRuntimeError::new_err(err_str)})?;
 
@@ -338,8 +332,8 @@ fn verify_aggr(
 /// creates an EVM compatible verifier, you will need solc installed in your environment to run this
 #[pyfunction(signature = (
     vk_path,
-    params_path,
-    circuit_params_path,
+    srs_path,
+    settings_path,
     deployment_code_path,
     sol_code_path=None,
     sol_bytecode_path=None,
@@ -347,8 +341,8 @@ fn verify_aggr(
 ))]
 fn create_evm_verifier(
     vk_path: PathBuf,
-    params_path: PathBuf,
-    circuit_params_path: PathBuf,
+    srs_path: PathBuf,
+    settings_path: PathBuf,
     deployment_code_path: PathBuf,
     sol_code_path: Option<PathBuf>,
     sol_bytecode_path: Option<PathBuf>,
@@ -356,8 +350,8 @@ fn create_evm_verifier(
 ) -> Result<bool, PyErr> {
     crate::execute::create_evm_verifier(
         vk_path,
-        params_path,
-        circuit_params_path,
+        srs_path,
+        settings_path,
         deployment_code_path,
         sol_code_path,
         sol_bytecode_path, 
@@ -375,14 +369,14 @@ fn create_evm_verifier(
     deployment_code_path,
     sol_code_path=None,
     sol_bytecode_path=None,
-    runs=None
+    witness=None,
 ))]
 fn verify_evm(
     proof_path: PathBuf,
-    deployment_code_path: PathBuf,
+    deployment_code_path: Option<PathBuf>,
     sol_code_path: Option<PathBuf>,
     sol_bytecode_path: Option<PathBuf>,
-    runs: Option<usize>,
+    witness: Option<PathBuf>,
 ) -> Result<bool, PyErr> {
 
     Runtime::new()
@@ -392,7 +386,7 @@ fn verify_evm(
         deployment_code_path,
         sol_code_path,
         sol_bytecode_path,
-        runs,
+        witness,
     )).map_err(|e| {
         let err_str = format!("Failed to run verify_evm: {}", e);
         PyRuntimeError::new_err(err_str)})?;
@@ -403,7 +397,7 @@ fn verify_evm(
 /// creates an evm compatible aggregate verifier, you will need solc installed in your environment to run this
 #[pyfunction(signature = (
     vk_path,
-    params_path,
+    srs_path,
     deployment_code_path,
     sol_code_path=None,
     sol_bytecode_path=None,
@@ -411,7 +405,7 @@ fn verify_evm(
 ))]
 fn create_evm_verifier_aggr(
     vk_path: PathBuf,
-    params_path: PathBuf,
+    srs_path: PathBuf,
     deployment_code_path: Option<PathBuf>,
     sol_code_path: Option<PathBuf>,
     sol_bytecode_path: Option<PathBuf>,
@@ -419,7 +413,7 @@ fn create_evm_verifier_aggr(
 ) -> Result<bool, PyErr> {
     crate::execute::create_evm_aggregate_verifier(
         vk_path,
-        params_path,
+        srs_path,
         deployment_code_path,
         sol_code_path,
         sol_bytecode_path,
@@ -452,15 +446,15 @@ fn ezkl_lib(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     // NOTE: DeployVerifierEVM and SendProofEVM will be implemented in python in pyezkl
     pyo3_log::init();
     m.add_class::<PyRunArgs>()?;
-    m.add_class::<PyCalArgs>()?;
     m.add_function(wrap_pyfunction!(table, m)?)?;
-    m.add_function(wrap_pyfunction!(gen_srs, m)?)?;
-    m.add_function(wrap_pyfunction!(forward, m)?)?;
     m.add_function(wrap_pyfunction!(mock, m)?)?;
     m.add_function(wrap_pyfunction!(setup, m)?)?;
     m.add_function(wrap_pyfunction!(prove, m)?)?;
     m.add_function(wrap_pyfunction!(verify, m)?)?;
-    m.add_function(wrap_pyfunction!(gen_circuit_params, m)?)?;
+    m.add_function(wrap_pyfunction!(gen_srs, m)?)?;
+    m.add_function(wrap_pyfunction!(gen_witness, m)?)?;
+    m.add_function(wrap_pyfunction!(gen_settings, m)?)?;
+    m.add_function(wrap_pyfunction!(calibrate_settings, m)?)?;
     m.add_function(wrap_pyfunction!(aggregate, m)?)?;
     m.add_function(wrap_pyfunction!(verify_aggr, m)?)?;
     m.add_function(wrap_pyfunction!(create_evm_verifier, m)?)?;
